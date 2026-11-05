@@ -1,4 +1,6 @@
 import React, { useEffect, useState } from 'react';
+import { errorText } from '../../api/client';
+import { useToast } from '../../components/Toast';
 import { StyleSheet, Text, View } from 'react-native';
 import { CircleCheck } from 'lucide-react-native';
 import { c, t } from '../../theme';
@@ -14,6 +16,7 @@ import { V3ScreenProps } from '../../navigation/types';
 // with live rules, optional referral code that resolves to the inviter.
 export function SignupAccountScreen({ navigation, route }: V3ScreenProps<'SignupAccount'>) {
   const { signupDraft, setSignupDraft } = useV3();
+  const toast = useToast();
   const [name, setName] = useState(signupDraft.name ?? '');
   const [mobile, setMobile] = useState(formatMobile(route.params?.mobile ?? signupDraft.mobile ?? ''));
   const [pw, setPw] = useState(signupDraft.password ?? '');
@@ -30,21 +33,30 @@ export function SignupAccountScreen({ navigation, route }: V3ScreenProps<'Signup
       setInviter(null);
       return;
     }
-    lookupReferral(ref).then((n) => {
-      if (!live) return;
-      setInviter(n);
-      setRefChecked(true);
-    });
+    // Wait for typing to stop: the server limits how often this can be called.
+    const id = setTimeout(() => {
+      lookupReferral(ref).then((n) => {
+        if (!live) return;
+        setInviter(n);
+        setRefChecked(true);
+      });
+    }, 500);
     return () => {
       live = false;
+      clearTimeout(id);
     };
   }, [ref]);
 
   const valid = name.trim().length > 1 && digits(mobile).length === 10 && rulesOk(pw, confirm);
 
   const next = async () => {
-    if (await isRegistered(mobile)) {
-      setTaken(true);
+    try {
+      if (await isRegistered(mobile)) {
+        setTaken(true);
+        return;
+      }
+    } catch (e) {
+      toast(errorText(e), 'error');
       return;
     }
     setSignupDraft({ name: name.trim(), mobile: digits(mobile), password: pw, referralCode: inviter ? ref.trim().toUpperCase() : undefined });

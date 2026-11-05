@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { openWithdrawal } from '../../api/withdrawals';
 import { Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -49,11 +50,11 @@ export function HistoryScreen({ navigation, route }: V3ScreenProps<'HistoryAll'>
   useFocusEffect(
     useCallback(() => {
       let live = true;
-      listLedger(wallet, range, kind, isNew).then((r) => live && setRows(r));
+      listLedger(wallet, range, kind).then((r) => live && setRows(r));
       return () => {
         live = false;
       };
-    }, [wallet, range, kind, isNew]),
+    }, [wallet, range, kind]),
   );
 
   const filtered = range !== 'month' || kind !== 'all';
@@ -142,7 +143,7 @@ export function HistoryScreen({ navigation, route }: V3ScreenProps<'HistoryAll'>
               {groups.map((g) => (
                 <View key={g.d} style={{ gap: 14 }}>
                   <Text style={[t.cap12Semibold, { color: c.textSecondary, letterSpacing: 2.16 }]}>{DAY_LABEL[g.d]}</Text>
-                  <LedgerList rows={g.rows} onRowPress={(r) => r.kind === 'withdraw' && navigation.navigate('WithdrawPaid', { id: 'W-3001' })} />
+                  <LedgerList rows={g.rows} onRowPress={(r) => r.kind === 'withdraw' && openWithdrawal(navigation, r.sub)} />
                 </View>
               ))}
             </>

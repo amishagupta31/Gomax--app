@@ -16,6 +16,7 @@ const KINDS: { key: GameKind | 'all'; label: string }[] = [
   { key: 'challenge', label: 'Challenges' },
 ];
 const RANGES = ['Last 7 days', 'This month', 'Last month'];
+const RANGE_KEYS = ['7d', 'month', 'lastMonth'] as const;
 
 // C2-16 Games history · runs won (17:14321)
 export function GamesHistoryScreen() {
@@ -26,11 +27,11 @@ export function GamesHistoryScreen() {
   useFocusEffect(
     useCallback(() => {
       let on = true;
-      gamesHistory(kind).then((r) => on && setRows(r));
+      gamesHistory(kind, RANGE_KEYS[range]).then((r) => on && setRows(r));
       return () => {
         on = false;
       };
-    }, [kind]),
+    }, [kind, range]),
   );
   const runs = rows.filter((r) => r.prize.kind === 'runs').reduce((s, r) => s + r.prize.amount, 0);
   const pts = rows.filter((r) => r.prize.kind === 'points').reduce((s, r) => s + r.prize.amount, 0);

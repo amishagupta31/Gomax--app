@@ -1,4 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { useToast } from '../../components/Toast';
+import { errorText } from '../../api/client';
 import {
   Image,
   KeyboardAvoidingView,
@@ -13,7 +15,6 @@ import {
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
-import { grantScratchCard } from '../../api/games';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
@@ -34,7 +35,7 @@ import {
 import { c, t } from '../../theme';
 import { d3, img } from '../../assets';
 import { Button } from '../../components/Button';
-import { redeemCoupon, ScanSource } from '../../api/coupons';
+import { RedeemResult, redeemCoupon, ScanSource } from '../../api/coupons';
 import { fmt, useV3 } from '../../state/Store';
 import { useV3Nav } from '../../navigation/types';
 
@@ -65,6 +66,7 @@ function ScanCamera({ cameraOn, focusManual }: { cameraOn: boolean; focusManual?
   const nav = useV3Nav();
   const tabNav = useNavigation<any>();
   const { account, patchAccount } = useV3();
+  const toast = useToast();
   const [torch, setTorch] = useState(false);
   const [code, setCode] = useState('');
   const [busy, setBusy] = useState(false);
@@ -88,24 +90,39 @@ function ScanCamera({ cameraOn, focusManual }: { cameraOn: boolean; focusManual?
     if (lock.current || !raw.trim()) return;
     lock.current = true;
     setBusy(true);
-    const res = await redeemCoupon(raw, source);
+    let res: RedeemResult;
+    try {
+      res = await redeemCoupon(raw, source);
+    } catch (e) {
+      lock.current = false;
+      setBusy(false);
+      toast(errorText(e), 'error');
+      return;
+    }
     setBusy(false);
-    if (res.kind === 'added' || res.kind === 'offline') {
-      if (res.kind === 'added') {
-        const today = account.todayCoupons + 1;
-        const firstEver = !account.firstCouponCelebrated;
-        const bonus = firstEver ? 25 : 0; // +25 welcome bonus as its own ledger line
-        patchAccount({
-          points: account.points + res.value + bonus,
-          lifetimePoints: account.lifetimePoints + res.value + bonus,
-          todayCoupons: today,
-          scratchCardsReady: account.scratchCardsReady + (today === 10 ? 1 : 0),
-        });
-        if (today === 10) grantScratchCard();
-        setCode('');
-        if (firstEver) return nav.navigate('FirstCoupon');
-        return nav.navigate('ScanResult', { outcome: today === 10 ? 'scratch' : 'added', code: raw, value: res.value });
-      }
+    if (res.kind === 'added') {
+      const firstEver = res.bonus > 0 || !account.firstCouponCelebrated;
+      const scratch = res.reward?.kind === 'scratch';
+      const gift = res.reward?.kind === 'gift' ? res.reward.gift : undefined;
+      patchAccount({
+        points: res.balance.points,
+        runs: res.balance.runs,
+        lifetimePoints: account.lifetimePoints + res.value + res.bonus,
+        todayCoupons: res.today.count,
+        firstCouponCelebrated: true,
+        scratchCardsReady: account.scratchCardsReady + (scratch ? 1 : 0),
+      });
+      setCode('');
+      if (firstEver) return nav.navigate('FirstCoupon', { value: res.value, bonus: res.bonus });
+      return nav.navigate('ScanResult', {
+        outcome: scratch ? 'scratch' : gift ? 'gift' : 'added',
+        code: raw,
+        value: res.value,
+        giftId: gift?.id,
+        giftName: gift?.name,
+      });
+    }
+    if (res.kind === 'offline') {
       setCode('');
       return nav.navigate('ScanResult', { outcome: 'offline', code: raw, value: res.value });
     }
@@ -113,6 +130,7 @@ function ScanCamera({ cameraOn, focusManual }: { cameraOn: boolean; focusManual?
       outcome: res.kind,
       code: raw,
       usedAt: res.kind === 'used' ? String(res.usedAt) : undefined,
+      reason: res.kind === 'invalid' ? res.reason : undefined,
     });
   };
 

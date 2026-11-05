@@ -21,9 +21,10 @@ export type V3StackParamList = {
   SignupBirthday: undefined;
   SignupSuccess: undefined;
   ForgotMobile: { mobile?: string } | undefined;
+  ForgotOtp: { mobile: string; verificationId: string };
   ForgotVerify: { mobile: string };
   ForgotChat: { mobile: string };
-  ForgotNewPassword: { mobile: string };
+  ForgotNewPassword: { mobile: string; token?: string; firebaseToken?: string };
   ForgotSuccess: undefined;
   ForgotHelpline: { mobile?: string } | undefined;
   ForgotHelplineSent: undefined;
@@ -33,7 +34,7 @@ export type V3StackParamList = {
   Tabs: NavigatorScreenParams<V3TabParamList> | undefined;
   RankSheet: undefined;
   HowItWorksSheet: undefined;
-  FirstCoupon: undefined;
+  FirstCoupon: { value: number; bonus: number } | undefined;
   PanUpiOverview: undefined;
   AddPan: undefined;
   AddUpi: undefined;
@@ -42,7 +43,7 @@ export type V3StackParamList = {
 
   // B1 Scan
   ScanTerms: undefined;
-  ScanResult: { outcome: ScanOutcome; code: string; value?: number; usedAt?: string };
+  ScanResult: { outcome: ScanOutcome; code: string; value?: number; usedAt?: string; reason?: string; giftId?: string; giftName?: string };
   MyScans: { range?: 'today' | 'week' | 'month'; status?: 'all' | 'added' | 'waiting' | 'failed' } | undefined;
 
   // B2 Wallet & Gifts, B4 History
@@ -57,7 +58,7 @@ export type V3StackParamList = {
 
   // B3 Withdraw
   Withdraw: undefined;
-  WithdrawConfirm: { amount: number };
+  WithdrawConfirm: { amount: number; upiId: string };
   WithdrawDone: { amount: number };
   WithdrawPaid: { id: string };
   WithdrawProof: { id: string };

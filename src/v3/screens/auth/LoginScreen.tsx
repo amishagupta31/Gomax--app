@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { useToast } from '../../components/Toast';
 import {
   Image,
   KeyboardAvoidingView,
@@ -33,7 +34,8 @@ type Status =
 // registered · A1-06 paused (17:11441 / 11704 / 11730 / 11759 / 11784).
 export function LoginScreen({ navigation, route }: V3ScreenProps<'Login'>) {
   const insets = useSafeAreaInsets();
-  const { setUser } = useV3();
+  const { setUser, refreshAccount } = useV3();
+  const toast = useToast();
   const [mobile, setMobile] = useState(formatMobile(route.params?.mobile ?? ''));
   const [password, setPassword] = useState('');
   const [status, setStatus] = useState<Status>({ kind: 'idle' });
@@ -45,10 +47,16 @@ export function LoginScreen({ navigation, route }: V3ScreenProps<'Login'>) {
   const submit = async () => {
     setBusy(true);
     const res = await login(mobile, password);
-    setBusy(false);
     if (res.ok) {
       setUser({ name: res.name, mobile: digits(mobile) });
+      await refreshAccount();
+      setBusy(false);
       navigation.reset({ index: 0, routes: [{ name: 'Tabs' }] });
+      return;
+    }
+    setBusy(false);
+    if (res.reason === 'error') {
+      toast(res.message, 'error');
       return;
     }
     setStatus(

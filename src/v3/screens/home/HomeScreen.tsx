@@ -1,4 +1,5 @@
 import React, { useRef, useState } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
 import { NativeScrollEvent, NativeSyntheticEvent, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
@@ -36,8 +37,13 @@ export function HomeScreen() {
   const tabNav = useNavigation<any>();
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
-  const { user, account, patchAccount } = useV3();
-  const name = user?.name ?? 'Ram Kumar';
+  const { user, account, patchAccount, refreshAccount } = useV3();
+  const name = user?.name ?? '';
+  useFocusEffect(
+    React.useCallback(() => {
+      refreshAccount();
+    }, [refreshAccount]),
+  );
 
   const firstTime = !account.firstTimeDone;
   const kycDone = !!account.pan && !!account.upi;

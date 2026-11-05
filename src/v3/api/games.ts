@@ -1,22 +1,17 @@
 import { d3 } from '../assets';
-import { RankId } from '../data/ranks';
 import { c } from '../theme';
+import { ApiError, api, dayMonth, daysAgo, read } from './client';
+import { artFor } from './art';
 
-// C2 Games & Challenges — local stand-ins for the endpoints in the C2 dev
-// notes (17:13427). Swap the bodies for real calls; the shapes match:
-//   POST /spins              → { prize }      (server decides, never client)
-//   GET  /scratch-cards      → ScratchCard[]
-//   POST /scratch-cards/:id/reveal → { prize }
-//   GET  /challenges         → Challenge[]
-//   POST /streak/photo       → { day }
-//   GET  /games/history      → GameRow[]
-
-const wait = (ms = 300) => new Promise((r) => setTimeout(r, ms));
-
-/** Free spins a day by rank (resets at 12 am). */
-export const SPINS_BY_RANK: Record<RankId, number> = { 'naya-saathi': 3, kaarigar: 4, ustaad: 5, legend: 5 };
+// C2 Games & Challenges. The server decides every prize and owns all progress:
+//   POST /spins · GET /scratch-cards · POST /scratch-cards/:id/reveal
+//   GET /challenges · POST /challenges/:id/claim · GET /quests
+//   GET /streak · POST /uploads + POST /streak/photo · GET /games/history
 
 export type Prize = { kind: 'runs' | 'points' | 'scratch'; amount: number };
+
+/** C2-01 wheel, clockwise from the pointer. */
+export const BIG_WHEEL_VALUES = [10, 20, 5, 50, 10, 100, 5, 20];
 
 /** Index into BIG_WHEEL for each prize the server can return. */
 export function segmentFor(p: Prize) {
@@ -24,15 +19,10 @@ export function segmentFor(p: Prize) {
   return idx.length ? idx[Math.floor(Math.random() * idx.length)][1] : 0;
 }
 
-/** C2-01 wheel, clockwise from the pointer. */
-export const BIG_WHEEL_VALUES = [10, 20, 5, 50, 10, 100, 5, 20];
-
-/** POST /spins — most spins win 5 or 10 runs; 100 is shown but never drawn. */
-export async function spin(): Promise<Prize> {
-  await wait(250);
-  const r = Math.random();
-  const amount = r < 0.45 ? 5 : r < 0.85 ? 10 : r < 0.97 ? 20 : 50;
-  return { kind: 'runs', amount };
+/** Throws ApiError `no_spins_left` when today's spins are used. */
+export async function spin() {
+  const r = await api<{ prizeRuns: number; spinsLeft: number; spinsTotal: number; runs: number }>('/spins', { method: 'POST' });
+  return { prize: { kind: 'runs', amount: r.prizeRuns } as Prize, spinsLeft: r.spinsLeft, runs: r.runs };
 }
 
 /** Seconds until the next 12 am reset. */
@@ -53,58 +43,47 @@ export type ScratchCard =
   | { id: string; state: 'locked'; progress: number }
   | { id: string; state: 'expired'; ended: string };
 
-let CARDS: ScratchCard[] = [
-  { id: 'sc-5', state: 'new', earned: '10 coupons today' },
-  { id: 'sc-4', state: 'new', earned: '10 coupons today' },
-  { id: 'sc-3', state: 'won', prize: { kind: 'runs', amount: 30 }, earned: '10 coupons · 1 Oct' },
-  { id: 'sc-2', state: 'won', prize: { kind: 'points', amount: 40 }, earned: '10 coupons · 30 Sep' },
-  { id: 'today', state: 'locked', progress: 6 },
-  { id: 'sc-1', state: 'expired', ended: 'Ended 20 Sep' },
-];
+type ServerCard = { id: string; state: 'new' | 'won' | 'expired'; earnedDay: string; source: string; expiresAt: string; prize: Prize | null };
 
-export async function listScratchCards(todayCoupons: number): Promise<ScratchCard[]> {
-  await wait(120);
-  return CARDS.map((card) => (card.state === 'locked' ? { ...card, progress: todayCoupons % 10 || card.progress } : card));
+let cards: ScratchCard[] = [];
+let won = { runs: 0, points: 0 };
+
+const earnedText = (x: ServerCard) => {
+  const how = x.source === 'coupons' ? '10 coupons' : 'Challenge reward';
+  return daysAgo(x.earnedDay) === 0 ? `${how} today` : `${how} · ${dayMonth(x.earnedDay)}`;
+};
+
+export async function listScratchCards(): Promise<ScratchCard[]> {
+  return read(async () => {
+    const r = await api<{ cards: ServerCard[]; today: { coupons: number; perCard: number; earned: boolean }; won: typeof won }>('/scratch-cards');
+    const rows: ScratchCard[] = r.cards.map((x) =>
+      x.state === 'won'
+        ? { id: x.id, state: 'won', prize: x.prize!, earned: earnedText(x) }
+        : x.state === 'expired'
+          ? { id: x.id, state: 'expired', ended: `Ended ${dayMonth(x.expiresAt)}` }
+          : { id: x.id, state: 'new', earned: earnedText(x) },
+    );
+    // Today's card, while it is still being earned.
+    if (!r.today.earned) rows.push({ id: 'today', state: 'locked', progress: r.today.coupons });
+    const order = { new: 0, locked: 1, won: 2, expired: 3 };
+    cards = rows.sort((a, b) => order[a.state] - order[b.state]);
+    won = r.won;
+    return cards;
+  }, cards);
 }
 
-export function scratchCard(id: string) {
-  return CARDS.find((x) => x.id === id);
+export const scratchCard = (id: string) => cards.find((x) => x.id === id);
+
+export async function firstNewCard() {
+  return (await listScratchCards()).find((x) => x.state === 'new')?.id;
 }
 
-/** Adds the card earned by the 10th coupon of the day (B1-04). */
-export function grantScratchCard() {
-  const id = `sc-${Date.now()}`;
-  CARDS = [{ id, state: 'new', earned: '10 coupons today' }, ...CARDS];
-  return id;
-}
-
-export function firstNewCard() {
-  return CARDS.find((x) => x.state === 'new')?.id;
-}
-
-const PENDING: Record<string, Prize> = {};
-
-/** POST /scratch-cards/:id/reveal — the prize is fixed server-side. */
+/** The server fixes the prize and adds it to the wallet. Safe to call twice. */
 export async function revealScratchCard(id: string): Promise<Prize> {
-  await wait(150);
-  const card = CARDS.find((x) => x.id === id);
-  if (card?.state === 'won') return card.prize;
-  PENDING[id] ??= { kind: 'runs', amount: [10, 20, 20, 30][Math.floor(Math.random() * 4)] };
-  return PENDING[id];
+  return (await api<{ prize: Prize }>(`/scratch-cards/${id}/reveal`, { method: 'POST' })).prize;
 }
 
-/** Marks the card opened once the user has scratched it (or tapped open). */
-export function claimScratchCard(id: string) {
-  const prize = PENDING[id];
-  if (!prize) return;
-  CARDS = CARDS.map((x) => (x.id === id ? { id, state: 'won', prize, earned: '10 coupons · today' } : x));
-}
-
-export const scratchWon = () =>
-  CARDS.reduce(
-    (s, x) => (x.state === 'won' ? { ...s, [x.prize.kind]: (s[x.prize.kind as 'runs' | 'points'] ?? 0) + x.prize.amount } : s),
-    { runs: 0, points: 0 } as { runs: number; points: number },
-  );
+export const scratchWon = () => won;
 
 // ── Challenges ───────────────────────────────────────────────────────────
 
@@ -130,7 +109,11 @@ export type Challenge = {
   /** "12/20" or "Day 6/15" */
   unit?: 'day';
   reward: string;
+  rewardRuns: number;
+  rewardScratchCards: number;
   ends: string;
+  /** Whole days left; undefined when it has no end date. */
+  daysLeft?: number;
   done?: boolean;
   /** Milestone steps on the detail page (C2-10). */
   steps?: { at: number; title: string; sub: string }[];
@@ -142,80 +125,128 @@ export type Challenge = {
   joined?: string;
 };
 
-export const CHALLENGES: Challenge[] = [
-  {
-    id: 'weekly', tag: 'Weekly', tone: 'runs', title: 'Scan 20 coupons this week', short: 'Scan 20 coupons', art: d3.bullseye,
-    progress: 12, goal: 20, reward: '+100 runs', ends: 'Ends Sun 11:59 pm',
-    page: 'Weekly challenge', ringSub: 'coupons this week', bonus: '+ “Hafte ka Hero” badge', endsLong: 'Ends Sunday 11:59 PM',
-    joined: '34 applicators in Amritsar are on it',
-    steps: [
-      { at: 5, title: 'Scan 5 coupons', sub: 'Done Mon' },
-      { at: 10, title: 'Scan 10 coupons', sub: 'Done Thu · +1 scratch card' },
-      { at: 20, title: 'Scan 20 coupons', sub: '' },
-    ],
-  },
-  {
-    id: 'streak', tag: 'Daily streak', tone: 'primary', title: 'Work photo every day', short: 'Daily work photo streak', art: d3.fire,
-    progress: 6, goal: 15, unit: 'day', reward: '+50 runs at 15 days', ends: 'Upload today',
-  },
-  {
-    id: 'ultra', tag: 'Ultra coupons', tone: 'warning', title: 'Scan 5 Ultra (premium) coupons', short: 'Scan 5 Ultra coupons', art: d3.gemStone,
-    progress: 2, goal: 5, reward: '+150 runs', ends: 'Ends 31 Oct',
-    page: 'Ultra challenge', ringSub: 'Ultra coupons', endsLong: 'Ends 31 Oct 11:59 PM', joined: '12 applicators in Amritsar are on it',
-    steps: [
-      { at: 1, title: 'Scan 1 Ultra coupon', sub: 'Done 3 Oct' },
-      { at: 3, title: 'Scan 3 Ultra coupons', sub: '' },
-      { at: 5, title: 'Scan 5 Ultra coupons', sub: '' },
-    ],
-  },
-  {
-    id: 'invite', tag: 'Invite', tone: 'success', title: 'Invite 2 applicators who scan', short: 'Invite 2 applicators', art: d3.handshake,
-    progress: 1, goal: 2, reward: '+100 runs', ends: 'No end date',
-  },
-  {
-    id: 'diwali', tag: 'Diwali special', tone: 'danger', title: 'Scan 50 coupons before Diwali', short: 'Diwali: 50 coupons', art: d3.partyPopper,
-    progress: 18, goal: 50, reward: '+300 runs + 2 scratch cards', ends: '12 days left',
-    page: 'Diwali special', ringSub: 'coupons before Diwali', bonus: '+ 2 scratch cards', endsLong: '12 days left',
-    joined: '58 applicators in Amritsar are on it',
-    steps: [
-      { at: 10, title: 'Scan 10 coupons', sub: 'Done 2 Oct' },
-      { at: 25, title: 'Scan 25 coupons', sub: '+1 scratch card' },
-      { at: 50, title: 'Scan 50 coupons', sub: '' },
-    ],
-  },
-];
+type ServerChallenge = {
+  id: string;
+  kind: string;
+  tag: string;
+  tone: ChallengeTone;
+  title: string;
+  shortTitle: string;
+  art: string;
+  goal: number;
+  progress: number;
+  rewardRuns: number;
+  rewardScratchCards: number;
+  bonusText: string | null;
+  milestones: { at: number; title: string; sub?: string }[];
+  endsAt: string | null;
+  wonAt?: string;
+  runsWon?: number;
+  participants?: number;
+};
 
-export const DONE_CHALLENGES: Challenge[] = [
-  { id: 'd1', tag: 'Weekly', tone: 'runs', title: 'Scan 15 coupons this week', short: 'Scan 15 coupons', art: d3.bullseye, progress: 15, goal: 15, reward: '+80 runs', ends: 'Won 28 Sep', done: true },
-  { id: 'd2', tag: 'Invite', tone: 'success', title: 'Invite 1 applicator who scans', short: 'Invite 1 applicator', art: d3.handshake, progress: 1, goal: 1, reward: '+50 runs', ends: 'Won 21 Sep', done: true },
-  { id: 'd3', tag: 'Weekly', tone: 'runs', title: 'Scan 10 coupons this week', short: 'Scan 10 coupons', art: d3.bullseye, progress: 10, goal: 10, reward: '+50 runs', ends: 'Won 14 Sep', done: true },
-];
+const RING_SUB: Record<string, string> = {
+  scan_count: 'coupons',
+  ultra_scan_count: 'Ultra coupons',
+  streak_days: 'days',
+  invite_count: 'joined',
+};
 
-export const challengeById = (id: string) => [...CHALLENGES, ...DONE_CHALLENGES].find((x) => x.id === id) ?? CHALLENGES[0];
-
-export async function listChallenges() {
-  await wait(120);
-  return { live: CHALLENGES, done: DONE_CHALLENGES };
+function toChallenge(x: ServerChallenge): Challenge {
+  const runs = x.runsWon ?? x.rewardRuns;
+  const cardsText = x.rewardScratchCards ? ` + ${x.rewardScratchCards} scratch card${x.rewardScratchCards > 1 ? 's' : ''}` : '';
+  const end = x.endsAt ? new Date(x.endsAt) : null;
+  const left = end ? Math.max(0, Math.ceil((end.getTime() - Date.now()) / 86_400_000)) : undefined;
+  const ends = x.wonAt ? `Won ${dayMonth(x.wonAt)}` : end ? `Ends ${dayMonth(x.endsAt!)}` : 'No end date';
+  return {
+    id: x.id,
+    tag: x.tag,
+    tone: x.tone,
+    title: x.title,
+    short: x.shortTitle,
+    art: artFor(x.art),
+    progress: x.progress,
+    goal: x.goal,
+    unit: x.kind === 'streak_days' ? 'day' : undefined,
+    reward: `+${runs} runs${cardsText}`,
+    rewardRuns: runs,
+    rewardScratchCards: x.rewardScratchCards,
+    ends,
+    daysLeft: left,
+    done: Boolean(x.wonAt),
+    steps: x.milestones.map((m) => ({ at: m.at, title: m.title, sub: m.sub ?? '' })),
+    page: `${x.tag} challenge`,
+    ringSub: RING_SUB[x.kind],
+    bonus: x.bonusText ?? undefined,
+    endsLong: end ? `${left} day${left === 1 ? '' : 's'} left` : ends,
+    joined: x.participants ? `${x.participants} applicator${x.participants > 1 ? 's are' : ' is'} on it` : undefined,
+  };
 }
 
-export type Quest = { id: string; title: string; art: number; reward: number; progress: number; goal: number };
-export const QUESTS: Quest[] = [
-  { id: 'q-scan', title: 'Scan 1 coupon', art: d3.coin, reward: 10, progress: 1, goal: 1 },
-  { id: 'q-invite', title: 'Invite 1 applicator', art: d3.bustsInSilhouette, reward: 50, progress: 0, goal: 1 },
-  { id: 'q-photo', title: 'Today’s work photo', art: d3.fire, reward: 5, progress: 0, goal: 1 },
-];
+let liveChallenges: Challenge[] = [];
+let doneChallenges: Challenge[] = [];
 
-export const BADGES = [
-  { id: 'first', label: 'First scan', art: d3.firstPlaceMedal, tint: c.primary100, got: true },
-  { id: 'streak7', label: '7-day streak', art: d3.fire, tint: c.warning50, got: true },
-  { id: 'team5', label: '5 joined', art: d3.handshake, tint: c.primary100, got: true },
-  { id: 'kaarigar', label: 'Kaarigar', art: d3.crown, tint: c.warning50, got: true },
-  { id: 'ustaad', label: 'Ustaad', art: d3.gemStone, tint: c.surfaceMuted, got: false },
-];
+export async function listChallenges() {
+  return read(async () => {
+    const r = await api<{ live: ServerChallenge[]; done: ServerChallenge[] }>('/challenges');
+    liveChallenges = r.live.map(toChallenge);
+    doneChallenges = r.done.map(toChallenge);
+    return { live: liveChallenges, done: doneChallenges };
+  }, { live: liveChallenges, done: doneChallenges });
+}
+
+const UNKNOWN_CHALLENGE: Challenge = {
+  id: '', tag: '', tone: 'runs', title: '', short: '', art: d3.bullseye, progress: 0, goal: 1,
+  reward: '', rewardRuns: 0, rewardScratchCards: 0, ends: '',
+};
+
+export const challengeById = (id: string) =>
+  liveChallenges.find((x) => x.id === id) ?? doneChallenges.find((x) => x.id === id) ?? UNKNOWN_CHALLENGE;
+
+/** Fresh progress and the "N applicators are on it" count for the detail page. */
+export async function loadChallenge(id: string) {
+  return read(async () => toChallenge(await api<ServerChallenge>(`/challenges/${encodeURIComponent(id)}`)), challengeById(id));
+}
+
+/** Adds the reward. Throws ApiError `not_complete` / `already_claimed`. */
+export const claimChallenge = (id: string) =>
+  api<{ runs: number; scratchCards: string[] }>(`/challenges/${encodeURIComponent(id)}/claim`, { method: 'POST' });
+
+export type Quest = { id: string; title: string; art: number; reward: number; progress: number; goal: number };
+
+const QUEST_ART: Record<string, number> = { scan: d3.coin, invite: d3.bustsInSilhouette, photo: d3.fire };
+
+export async function listQuests(): Promise<Quest[]> {
+  return read(async () => {
+    const r = await api<{ quests: { id: string; title: string; reward: number; done: boolean }[] }>('/quests');
+    return r.quests.map((q) => ({
+      id: `q-${q.id}`,
+      title: q.title,
+      art: QUEST_ART[q.id] ?? d3.coin,
+      reward: q.reward,
+      progress: q.done ? 1 : 0,
+      goal: 1,
+    }));
+  }, []);
+}
+
+/** Worked out from the account: the API has no badge list yet. */
+export function badgesFor(a: { lifetimePoints: number; streakDay: number; joined: number; rankIndex: number }) {
+  return [
+    { id: 'first', label: 'First scan', art: d3.firstPlaceMedal, tint: c.primary100, got: a.lifetimePoints > 0 },
+    { id: 'streak7', label: '7-day streak', art: d3.fire, tint: c.warning50, got: a.streakDay >= 7 },
+    { id: 'team5', label: '5 joined', art: d3.handshake, tint: c.primary100, got: a.joined >= 5 },
+    { id: 'kaarigar', label: 'Kaarigar', art: d3.crown, tint: c.warning50, got: a.rankIndex >= 1 },
+    { id: 'ustaad', label: 'Ustaad', art: d3.gemStone, tint: c.surfaceMuted, got: a.rankIndex >= 2 },
+  ];
+}
 
 // ── Photo streak ─────────────────────────────────────────────────────────
 
-export const STREAK_REWARDS = [
+export type StreakReward = { days: number; reward: string };
+
+/** Admin-set. Refreshed by loadStreakRewards(). */
+export let STREAK_REWARDS: StreakReward[] = [
   { days: 15, reward: '+50 runs' },
   { days: 30, reward: '+120 runs' },
   { days: 45, reward: '+200 runs' },
@@ -223,10 +254,37 @@ export const STREAK_REWARDS = [
   { days: 120, reward: '+800 runs · Streak Star' },
 ];
 
-/** POST /streak/photo — one camera photo a day, time-stamped; checked within 24 h. */
-export async function uploadStreakPhoto(_uri: string | null, day: number) {
-  await wait(600);
-  return { day: day + 1 };
+type StreakView = { completed: number; doneToday: boolean; rewards: { days: number; runs: number }[] };
+
+function applyRewards(s: StreakView) {
+  if (s.rewards.length) STREAK_REWARDS = s.rewards.map((r) => ({ days: r.days, reward: `+${r.runs} runs` }));
+  return { day: s.completed, doneToday: s.doneToday };
+}
+
+export const loadStreakRewards = () => read(async () => applyRewards(await api<StreakView>('/streak')), null);
+
+/**
+ * One camera photo a day: gets a signed URL, uploads the file, then records
+ * it. Local dev has no bucket (a `memory://` URL), so that upload is skipped.
+ */
+export async function uploadStreakPhoto(uri: string | null, takenAt: Date) {
+  const up = await api<{ object: string; url: string; headers: Record<string, string> }>('/uploads', {
+    method: 'POST',
+    body: { purpose: 'streak', contentType: 'image/jpeg' },
+  });
+  if (!up.url.startsWith('memory://')) {
+    if (!uri) throw new ApiError(400, 'no_photo', 'Could not take the photo. Try again.');
+    let ok = false;
+    try {
+      const file = await (await fetch(uri)).blob();
+      ok = (await fetch(up.url, { method: 'PUT', headers: up.headers, body: file })).ok;
+    } catch {
+      throw new ApiError(0, 'network', 'No internet. Check your connection and try again.');
+    }
+    if (!ok) throw new ApiError(500, 'upload_failed', 'Photo upload failed. Try again.');
+  }
+  const s = await api<StreakView>('/streak/photo', { method: 'POST', body: { object: up.object, takenAt: takenAt.toISOString() } });
+  return applyRewards(s);
 }
 
 // ── Games history (C2-16) ────────────────────────────────────────────────
@@ -234,19 +292,22 @@ export async function uploadStreakPhoto(_uri: string | null, day: number) {
 export type GameKind = 'spin' | 'scratch' | 'challenge';
 export type GameRow = { id: string; kind: GameKind; title: string; sub: string; prize: Prize; day: string };
 
-const HISTORY: GameRow[] = [
-  { id: 'g1', kind: 'spin', title: 'Spin the wheel', sub: '10:05 am', prize: { kind: 'runs', amount: 10 }, day: 'TODAY' },
-  { id: 'g2', kind: 'scratch', title: 'Scratch card', sub: '9:00 am', prize: { kind: 'runs', amount: 20 }, day: 'TODAY' },
-  { id: 'g3', kind: 'challenge', title: 'Weekly challenge won', sub: 'Scan 20 coupons', prize: { kind: 'runs', amount: 100 }, day: 'YESTERDAY' },
-  { id: 'g4', kind: 'scratch', title: 'Scratch card', sub: '10 coupons', prize: { kind: 'runs', amount: 30 }, day: 'YESTERDAY' },
-  { id: 'g5', kind: 'scratch', title: 'Scratch card', sub: '10 coupons', prize: { kind: 'points', amount: 40 }, day: '30 SEP' },
-];
+const dayLabel = (iso: string) => {
+  const ago = daysAgo(iso);
+  return ago <= 0 ? 'TODAY' : ago === 1 ? 'YESTERDAY' : dayMonth(iso).toUpperCase();
+};
 
-export async function gamesHistory(kind: GameKind | 'all') {
-  await wait(120);
-  return HISTORY.filter((r) => kind === 'all' || r.kind === kind);
-}
-
-export function logGame(row: Omit<GameRow, 'id' | 'day'>) {
-  HISTORY.unshift({ ...row, id: `g${Date.now()}`, day: 'TODAY' });
+export async function gamesHistory(kind: GameKind | 'all', range: '7d' | 'month' | 'lastMonth' = '7d'): Promise<GameRow[]> {
+  return read(async () => {
+    type Row = { id: string; kind: GameKind; title: string; sub: string | null; wallet: 'runs' | 'points'; amount: number; at: string };
+    const r = await api<{ rows: Row[] }>('/games/history', { query: { kind, range, limit: 100 } });
+    return r.rows.map((x) => ({
+      id: x.id,
+      kind: x.kind,
+      title: x.title,
+      sub: x.sub ?? '',
+      prize: { kind: x.wallet, amount: x.amount },
+      day: dayLabel(x.at),
+    }));
+  }, []);
 }

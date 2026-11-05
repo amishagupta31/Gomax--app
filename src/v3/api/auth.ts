@@ -1,23 +1,18 @@
-// Auth calls for the v3 Applicator app. Contract from the A1 dev notes:
-//   POST /auth/login {mobile, password} · POST /auth/signup · POST /auth/reset-request
-// These are local stand-ins until the backend exposes those endpoints — keep
-// the signatures and swap the bodies for real requests.
+// Sign in, sign up and password reset (A1). POST /v1/auth/*.
+import { ApiError, api, clearSession, currentRefreshToken, errorText, getDeviceId, setSession } from './client';
 
 export type LoginResult =
   | { ok: true; name: string }
   | { ok: false; reason: 'wrong_password'; triesLeft: number }
   | { ok: false; reason: 'not_registered' }
-  | { ok: false; reason: 'paused'; until: number };
+  | { ok: false; reason: 'paused'; until: number }
+  | { ok: false; reason: 'error'; message: string };
 
-const MAX_TRIES = 3;
-const PAUSE_MS = 30 * 60 * 1000;
-
-// Demo account: +91 98765 43210 / gomax123
-const accounts = new Map<string, { name: string; password: string }>([
-  ['9876543210', { name: 'Ram Kumar', password: 'gomax123' }],
-]);
-const failures = new Map<string, number>();
-const pausedUntil = new Map<string, number>();
+type Session = {
+  user: { id: string; name: string; mobile: string; inviteCode: string };
+  accessToken: string;
+  refreshToken: string;
+};
 
 export const digits = (s: string) => s.replace(/\D/g, '').slice(-10);
 
@@ -27,26 +22,22 @@ export function formatMobile(s: string) {
 }
 
 export async function login(mobile: string, password: string): Promise<LoginResult> {
-  const id = digits(mobile);
-  const until = pausedUntil.get(id);
-  if (until && until > Date.now()) return { ok: false, reason: 'paused', until };
-
-  const acct = accounts.get(id);
-  if (!acct) return { ok: false, reason: 'not_registered' };
-
-  if (acct.password !== password) {
-    const n = (failures.get(id) ?? 0) + 1;
-    failures.set(id, n);
-    if (n >= MAX_TRIES) {
-      failures.delete(id);
-      const u = Date.now() + PAUSE_MS;
-      pausedUntil.set(id, u);
-      return { ok: false, reason: 'paused', until: u };
+  try {
+    const s = await api<Session>('/auth/login', {
+      method: 'POST',
+      auth: false,
+      body: { mobile: digits(mobile), password, deviceId: await getDeviceId() },
+    });
+    await setSession(s);
+    return { ok: true, name: s.user.name };
+  } catch (e) {
+    if (e instanceof ApiError) {
+      if (e.code === 'not_registered') return { ok: false, reason: 'not_registered' };
+      if (e.code === 'wrong_password') return { ok: false, reason: 'wrong_password', triesLeft: Number(e.extra.triesLeft ?? 0) };
+      if (e.code === 'paused') return { ok: false, reason: 'paused', until: new Date(String(e.extra.until)).getTime() };
     }
-    return { ok: false, reason: 'wrong_password', triesLeft: MAX_TRIES - n };
+    return { ok: false, reason: 'error', message: errorText(e) };
   }
-  failures.delete(id);
-  return { ok: true, name: acct.name };
 }
 
 export type SignupInput = {
@@ -58,30 +49,51 @@ export type SignupInput = {
   anniversary?: string;
 };
 
+/** Creates the account and signs in. Throws ApiError if the server refuses it. */
 export async function signup(input: SignupInput) {
-  accounts.set(digits(input.mobile), { name: input.name, password: input.password });
-  return { ok: true as const };
+  const s = await api<Session>('/auth/signup', {
+    method: 'POST',
+    auth: false,
+    body: { ...input, mobile: digits(input.mobile), deviceId: await getDeviceId() },
+  });
+  await setSession(s);
+  return s.user;
 }
 
 /** Resolves a referral code to the inviter's display name, or null. */
 export async function lookupReferral(code: string): Promise<string | null> {
-  const known: Record<string, string> = { RAMESH25: 'Ramesh Traders' };
-  return known[code.trim().toUpperCase()] ?? null;
+  try {
+    const r = await api<{ name: string }>(`/auth/referral/${encodeURIComponent(code.trim().toUpperCase())}`, { auth: false });
+    return r.name;
+  } catch {
+    return null;
+  }
 }
 
 export async function isRegistered(mobile: string) {
-  return accounts.has(digits(mobile));
+  const r = await api<{ registered: boolean }>('/auth/registered', { auth: false, query: { mobile: digits(mobile) } });
+  return r.registered;
 }
 
-export async function setNewPassword(mobile: string, password: string) {
-  const acct = accounts.get(digits(mobile));
-  if (acct) acct.password = password;
-  pausedUntil.delete(digits(mobile));
-  return { ok: true as const };
+/** A1-13: `token` comes from the WhatsApp reset link. */
+export async function setNewPassword(token: string, password: string) {
+  return api<{ ok: true; mobile: string }>('/auth/reset-password', { method: 'POST', auth: false, body: { token, password } });
+}
+
+/** OTP reset: `firebaseToken` is a Firebase ID token proving phone ownership. */
+export async function resetWithOtp(firebaseToken: string, newPassword: string) {
+  return api<{ ok: true; mobile: string }>('/auth/reset-otp', { method: 'POST', auth: false, body: { firebaseToken, newPassword } });
 }
 
 export async function requestHelplineReset(mobile: string) {
-  return { ok: true as const, channel: 'helpline' as const, mobile: digits(mobile) };
+  return api<{ ok: true; channel: 'helpline' }>('/auth/reset-request', { method: 'POST', auth: false, body: { mobile: digits(mobile) } });
+}
+
+/** Ends the session on the server (best effort) and on this phone. */
+export async function logout() {
+  const refreshToken = currentRefreshToken();
+  await clearSession();
+  if (refreshToken) await api('/auth/logout', { method: 'POST', auth: false, body: { refreshToken } }).catch(() => undefined);
 }
 
 export function passwordRules(pw: string, confirm: string) {

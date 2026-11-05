@@ -1,9 +1,10 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
+import { openWithdrawal } from '../../api/withdrawals';
 import { Image, Linking, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useRoute } from '@react-navigation/native';
+import { useFocusEffect, useRoute } from '@react-navigation/native';
 import { BadgeCheck, CircleCheck, CircleHelp, Coins, Gift, Info, Package, QrCode, Sparkles } from 'lucide-react-native';
 import { c, t, HELPLINE_TEL } from '../../theme';
 import { d3 } from '../../assets';
@@ -11,7 +12,7 @@ import { Button } from '../../components/Button';
 import { Sheet } from '../../components/Sheet';
 import { LinkText } from '../../components/Layout';
 import { LedgerList } from '../../components/LedgerList';
-import { GIFTS, Gift as GiftT, listOrders, recentPoints } from '../../api/wallet';
+import { Gift as GiftT, LedgerRow, cachedGifts, listGifts, listLedger, listOrders } from '../../api/wallet';
 import { WITHDRAW_MIN, fmt, useV3 } from '../../state/Store';
 import { V3ScreenProps, useV3Nav } from '../../navigation/types';
 
@@ -24,6 +25,12 @@ export function WalletScreen() {
   const route = useRoute<any>();
   const insets = useSafeAreaInsets();
   const [tab, setTab] = useState<Tab>(route.params?.tab ?? 'points');
+  const { refreshAccount } = useV3();
+  useFocusEffect(
+    useCallback(() => {
+      refreshAccount();
+    }, [refreshAccount]),
+  );
   useEffect(() => {
     if (route.params?.tab) setTab(route.params.tab);
   }, [route.params?.tab]);
@@ -123,10 +130,14 @@ function RunsCard() {
   const nav = useV3Nav();
   const { account } = useV3();
   const [orders, setOrders] = useState(0);
-  useEffect(() => {
-    listOrders().then((o) => setOrders(o.length));
-  }, []);
-  const affordable = GIFTS.filter((g) => g.runs <= account.runs).length;
+  const [gifts, setGifts] = useState(cachedGifts);
+  useFocusEffect(
+    useCallback(() => {
+      listOrders().then((o) => setOrders(o.length));
+      listGifts().then(setGifts);
+    }, []),
+  );
+  const affordable = gifts.filter((g) => g.runs <= account.runs).length;
   return (
     <LinearGradient colors={['#0b5560', '#0f8a8f']} locations={[0.146, 0.854]} start={{ x: 0.78, y: 0 }} end={{ x: 0.22, y: 1 }} style={styles.readyCard}>
       <Text style={[t.cap12Semibold, { color: '#fff', letterSpacing: 2.16 }]}>RUNS</Text>
@@ -159,6 +170,12 @@ function Big({ value, unit }: { value: number; unit: string }) {
 
 function PointsHistory() {
   const nav = useV3Nav();
+  const [rows, setRows] = useState<LedgerRow[]>([]);
+  useFocusEffect(
+    useCallback(() => {
+      listLedger('points', 'month', 'all', 3).then(setRows);
+    }, []),
+  );
   return (
     <>
       <View style={styles.sheetHead}>
@@ -167,7 +184,7 @@ function PointsHistory() {
           <Text style={[t.sec13Semibold, { color: c.primary700 }]}>See all</Text>
         </Pressable>
       </View>
-      <LedgerList rows={recentPoints()} round onRowPress={(r) => r.kind === 'withdraw' && nav.navigate('WithdrawPaid', { id: 'W-3001' })} />
+      <LedgerList rows={rows} round onRowPress={(r) => r.kind === 'withdraw' && openWithdrawal(nav, r.sub)} />
     </>
   );
 }
@@ -175,6 +192,10 @@ function PointsHistory() {
 function GiftChart() {
   const { width } = useWindowDimensions();
   const cardW = (Math.min(width, 520) - 40 - 12) / 2;
+  const [gifts, setGifts] = useState(cachedGifts);
+  useEffect(() => {
+    listGifts().then(setGifts);
+  }, []);
   return (
     <>
       <View style={styles.sheetHead}>
@@ -182,7 +203,7 @@ function GiftChart() {
         <Text style={[t.sec13Semibold, { color: c.primary700 }]}>Low to high</Text>
       </View>
       <View style={styles.grid}>
-        {[...GIFTS].sort((a, b) => a.runs - b.runs).map((g) => (
+        {[...gifts].sort((a, b) => a.runs - b.runs).map((g) => (
           <GiftCard key={g.id} gift={g} width={cardW} />
         ))}
       </View>

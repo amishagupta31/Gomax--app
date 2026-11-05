@@ -1,4 +1,6 @@
 import React, { useState } from 'react';
+import { errorText } from '../../api/client';
+import { useToast } from '../../components/Toast';
 import { Image, Linking, StyleSheet, Text, View } from 'react-native';
 import Animated, { ZoomIn } from 'react-native-reanimated';
 import { Clock, LockOpen, MessageCircle, Phone, Send, UserCheck, LucideIcon } from 'lucide-react-native';
@@ -9,7 +11,8 @@ import { Field } from '../../components/Field';
 import { Button } from '../../components/Button';
 import { PasswordRules, rulesOk } from '../../components/PasswordRules';
 import { WhatsAppChat } from '../../components/WhatsAppChat';
-import { digits, formatMobile, isRegistered, requestHelplineReset, setNewPassword } from '../../api/auth';
+import auth from '@react-native-firebase/auth';
+import { digits, formatMobile, isRegistered, requestHelplineReset, resetWithOtp, setNewPassword } from '../../api/auth';
 import { firstName, useV3 } from '../../state/Store';
 import { V3ScreenProps } from '../../navigation/types';
 
@@ -23,13 +26,25 @@ export function ForgotMobileScreen({ navigation, route }: V3ScreenProps<'ForgotM
   const [mobile, setMobile] = useState(formatMobile(route.params?.mobile ?? ''));
   const [error, setError] = useState<string>();
   const valid = digits(mobile).length === 10;
+  const toast = useToast();
 
   const next = async () => {
-    if (!(await isRegistered(mobile))) {
-      setError('This number is not registered');
+    try {
+      if (!(await isRegistered(mobile))) {
+        setError('This number is not registered');
+        return;
+      }
+    } catch (e) {
+      toast(errorText(e), 'error');
       return;
     }
-    navigation.navigate('ForgotVerify', { mobile: digits(mobile) });
+    // Send Firebase SMS OTP to prove ownership of the number.
+    try {
+      const confirmation = await auth().signInWithPhoneNumber('+91' + digits(mobile));
+      navigation.navigate('ForgotOtp', { mobile: digits(mobile), verificationId: confirmation.verificationId });
+    } catch (e) {
+      toast(errorText(e), 'error');
+    }
   };
 
   return (
@@ -67,10 +82,10 @@ export function ForgotVerifyScreen({ navigation, route }: V3ScreenProps<'ForgotV
 
   const openWhatsApp = async () => {
     const url = `https://wa.me/${WA_BUSINESS}?text=${encodeURIComponent(message)}`;
-    // In production the reply link deep-links back into A1-13. Until the
-    // WhatsApp Business bot is live, show the in-app mock of that chat (A1-12).
+    // The WhatsApp bot's reply link carries the reset token into A1-13. Until
+    // that bot is live a reset can only go through the helpline (A1-15).
     if (process.env.EXPO_PUBLIC_WA_LIVE === '1') await Linking.openURL(url);
-    else navigation.navigate('ForgotChat', { mobile: route.params.mobile });
+    else navigation.navigate('ForgotHelpline', { mobile: route.params.mobile });
   };
 
   return (
@@ -151,10 +166,21 @@ export function ForgotNewPasswordScreen({ navigation, route }: V3ScreenProps<'Fo
   const [pw, setPw] = useState('');
   const [confirm, setConfirm] = useState('');
   const [busy, setBusy] = useState(false);
+  const toast = useToast();
   const save = async () => {
     setBusy(true);
-    await setNewPassword(route.params.mobile, pw);
-    setBusy(false);
+    try {
+      if (route.params.firebaseToken) {
+        await resetWithOtp(route.params.firebaseToken, pw);
+      } else {
+        await setNewPassword(route.params.token ?? '', pw);
+      }
+    } catch (e) {
+      toast(errorText(e), 'error');
+      return;
+    } finally {
+      setBusy(false);
+    }
     navigation.reset({ index: 0, routes: [{ name: 'ForgotSuccess' }] });
   };
   return (
@@ -190,10 +216,17 @@ export function ForgotSuccessScreen({ navigation }: V3ScreenProps<'ForgotSuccess
 // A1-15 Forgot · other ways (helpline) (17:11651)
 export function ForgotHelplineScreen({ navigation, route }: V3ScreenProps<'ForgotHelpline'>) {
   const [busy, setBusy] = useState(false);
+  const toast = useToast();
   const request = async () => {
     setBusy(true);
-    await requestHelplineReset(route.params?.mobile ?? '');
-    setBusy(false);
+    try {
+      await requestHelplineReset(route.params?.mobile ?? '');
+    } catch (e) {
+      toast(errorText(e), 'error');
+      return;
+    } finally {
+      setBusy(false);
+    }
     navigation.navigate('ForgotHelplineSent');
   };
   return (

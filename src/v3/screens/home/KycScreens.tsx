@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { errorText } from '../../api/client';
 import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import Animated, { ZoomIn } from 'react-native-reanimated';
 import { ChevronRight, Coins, IdCard, LucideIcon, ScanLine, ShieldCheck, Smartphone } from 'lucide-react-native';
@@ -9,7 +10,7 @@ import { Button } from '../../components/Button';
 import { useToast } from '../../components/Toast';
 import { FormField, OkNote } from '../../components/FormField';
 import { FieldError } from '../../components/Field';
-import { maskPan, validateUpi, verifyPan } from '../../api/kyc';
+import { saveUpi, validateUpi, verifyPan } from '../../api/kyc';
 import { WITHDRAW_MIN, fmt, useV3 } from '../../state/Store';
 import { V3ScreenProps } from '../../navigation/types';
 
@@ -103,6 +104,7 @@ export function AddPanScreen({ navigation }: V3ScreenProps<'AddPan'>) {
   const [pan, setPan] = useState('');
   const [name, setName] = useState((user?.name ?? '').toUpperCase());
   const [checked, setChecked] = useState<string | null>(null);
+  const [masked, setMasked] = useState('');
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
 
@@ -111,19 +113,25 @@ export function AddPanScreen({ navigation }: V3ScreenProps<'AddPan'>) {
     setError(undefined);
     if (pan.length !== 10 || name.trim().length < 3) return;
     let live = true;
-    verifyPan(pan, name).then((r) => {
-      if (!live) return;
-      if (r.ok) setChecked(r.name);
-      else setError(r.error);
-    });
+    // Each check goes to the government lookup, so wait for typing to stop.
+    const id = setTimeout(() => {
+      verifyPan(pan, name).then((r) => {
+        if (!live) return;
+        if (r.ok) {
+          setChecked(r.name);
+          setMasked(r.masked);
+        } else setError(r.error);
+      });
+    }, 700);
     return () => {
       live = false;
+      clearTimeout(id);
     };
   }, [pan, name]);
 
   const next = () => {
     setBusy(true);
-    patchAccount({ pan: { masked: maskPan(pan), name: checked! } });
+    patchAccount({ pan: { masked, name: checked! } });
     setBusy(false);
     navigation.replace('AddUpi');
   };
@@ -160,6 +168,7 @@ export function AddUpiScreen({ navigation }: V3ScreenProps<'AddUpi'>) {
   const [upi, setUpi] = useState('');
   const [result, setResult] = useState<{ name: string; matches: boolean } | null>(null);
   const [error, setError] = useState<string>();
+  const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     setResult(null);
@@ -167,7 +176,7 @@ export function AddUpiScreen({ navigation }: V3ScreenProps<'AddUpi'>) {
     if (!upi.includes('@') || upi.split('@')[1].length < 2) return;
     let live = true;
     const id = setTimeout(() => {
-      validateUpi(upi, account.pan?.name).then((r) => {
+      validateUpi(upi).then((r) => {
         if (!live) return;
         if (r.ok) setResult({ name: r.name, matches: r.matches });
         else setError(r.error);
@@ -179,14 +188,22 @@ export function AddUpiScreen({ navigation }: V3ScreenProps<'AddUpi'>) {
     };
   }, [upi, account.pan?.name]);
 
-  const save = () => {
-    patchAccount({ upi: { id: upi.trim(), name: result!.name } });
+  const save = async () => {
+    setBusy(true);
+    try {
+      patchAccount({ upi: await saveUpi(upi) });
+    } catch (e) {
+      setError(errorText(e));
+      return;
+    } finally {
+      setBusy(false);
+    }
     toast('UPI ID saved');
     navigation.reset({ index: 1, routes: [{ name: 'Tabs' }, { name: 'PanUpiDone' }] });
   };
 
   return (
-    <Page bg={c.surfacePage} footerBordered footer={<Button label="Save UPI" disabled={!result?.matches} onPress={save} />}>
+    <Page bg={c.surfacePage} footerBordered footer={<Button label="Save UPI" disabled={!result?.matches} loading={busy} onPress={save} />}>
       <CenterBar title="Add UPI" />
       <View style={{ gap: 14, paddingTop: 8 }}>
         <KycDots step={2} />
@@ -241,12 +258,14 @@ export function PanUpiDoneScreen({ navigation }: V3ScreenProps<'PanUpiDone'>) {
 }
 
 // A3-04 First coupon celebration (17:17479) — shown once after 1st valid scan.
-export function FirstCouponScreen({ navigation }: V3ScreenProps<'FirstCoupon'>) {
+export function FirstCouponScreen({ navigation, route }: V3ScreenProps<'FirstCoupon'>) {
   const { user, account, patchAccount } = useV3();
   useEffect(() => {
     patchAccount({ firstCouponCelebrated: true });
   }, [patchAccount]);
-  const name = (user?.name ?? 'Ram').split(' ')[0];
+  const name = (user?.name ?? '').split(' ')[0];
+  const value = route.params?.value ?? 0;
+  const bonus = route.params?.bonus ?? 0;
   const left = Math.max(0, 10 - account.todayCoupons);
   return (
     <Page
@@ -270,13 +289,13 @@ export function FirstCouponScreen({ navigation }: V3ScreenProps<'FirstCoupon'>) 
         <Animated.View entering={ZoomIn.springify().damping(12)} style={styles.coupon}>
           <Image source={d3.ticket} style={{ width: 64, height: 64 }} />
           <Text style={[t.sec13Semibold, { color: c.textSecondary }]}>1st coupon added</Text>
-          <Text style={styles.plus}>+35 pts</Text>
+          <Text style={styles.plus}>+{value + bonus} pts</Text>
           <View style={{ flexDirection: 'row', gap: 6 }}>
             <View style={[styles.pill, { backgroundColor: c.surfaceMuted }]}>
-              <Text style={[t.cap12Medium, { color: c.textSecondary }]}>Coupon 10 pts</Text>
+              <Text style={[t.cap12Medium, { color: c.textSecondary }]}>Coupon {value} pts</Text>
             </View>
             <View style={[styles.pill, { backgroundColor: c.success50 }]}>
-              <Text style={[t.cap12Medium, { color: c.successText }]}>🎁 Bonus +25</Text>
+              <Text style={[t.cap12Medium, { color: c.successText }]}>🎁 Bonus +{bonus}</Text>
             </View>
           </View>
         </Animated.View>

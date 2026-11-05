@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
@@ -6,17 +6,29 @@ import Svg, { Circle, Defs, RadialGradient, Stop } from 'react-native-svg';
 import Animated, { FadeIn } from 'react-native-reanimated';
 import { img } from '../../assets';
 import { c } from '../../theme';
+import { useV3 } from '../../state/Store';
 import { V3ScreenProps } from '../../navigation/types';
 
-// A1-01 Splash (17:11436). Tap anywhere, or wait, → A1-02 Login.
+// A1-01 Splash (17:11436). Tap anywhere, or wait, → Home if the saved session
+// is still good, else A1-02 Login.
 export function SplashScreen({ navigation }: V3ScreenProps<'Splash'>) {
+  const { restoreSession } = useV3();
+  const [session] = useState(restoreSession);
+  const left = useRef(false);
+
+  const leave = useCallback(async () => {
+    if (left.current) return;
+    left.current = true;
+    navigation.replace((await session) ? 'Tabs' : 'Login');
+  }, [navigation, session]);
+
   useEffect(() => {
-    const id = setTimeout(() => navigation.replace('Login'), 1800);
+    const id = setTimeout(leave, 1800);
     return () => clearTimeout(id);
-  }, [navigation]);
+  }, [leave]);
 
   return (
-    <Pressable style={styles.flex} onPress={() => navigation.replace('Login')}>
+    <Pressable style={styles.flex} onPress={leave}>
       <StatusBar style="light" />
       <LinearGradient
         colors={['#000000', c.navyDeep]}

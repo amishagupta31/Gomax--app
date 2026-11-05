@@ -1,4 +1,5 @@
 import React, { useCallback, useState } from 'react';
+import { errorText } from '../../api/client';
 import { Image, Linking, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -29,7 +30,7 @@ import { Chips } from '../../components/Chips';
 import { Timeline, TimelineStep } from '../../components/Timeline';
 import { StaticTabBar } from '../../components/TabBar';
 import { formatMobile } from '../../api/auth';
-import { GiftOrder, ORDER_STEPS, bookGift, giftById, listOrders, orderById, Gift } from '../../api/wallet';
+import { GiftOrder, ORDER_STEPS, OrderStep, bookGift, giftById, listGifts, listOrders, orderById, Gift } from '../../api/wallet';
 import { fmt, useV3 } from '../../state/Store';
 import { V3ScreenProps } from '../../navigation/types';
 
@@ -175,22 +176,31 @@ function InfoRow({ icon: Icon, title, sub }: { icon: typeof Package; title: stri
 
 // B2-06 Gift · confirm address (17:18316)
 export function GiftAddressScreen({ navigation, route }: V3ScreenProps<'GiftAddress'>) {
-  const { user, account, patchAccount } = useV3();
+  const { user, refreshAccount } = useV3();
+  const toast = useToast();
   const gift = giftById(route.params.giftId);
-  const [name, setName] = useState(user?.name ?? 'Ram Kumar');
-  const [mobile, setMobile] = useState(formatMobile(user?.mobile ?? '9876543210'));
-  const [street, setStreet] = useState('H.No 214, Gali 3, Gandhi Nagar');
-  const [city, setCity] = useState('Amritsar');
-  const [pin, setPin] = useState('143001');
+  const [name, setName] = useState(user?.name ?? '');
+  const [mobile, setMobile] = useState(formatMobile(user?.mobile ?? ''));
+  const [street, setStreet] = useState('');
+  const [city, setCity] = useState('');
+  const [pin, setPin] = useState('');
+  const [size, setSize] = useState<string>();
   const [busy, setBusy] = useState(false);
-  const valid = name.trim() && mobile.replace(/\D/g, '').length === 10 && street.trim() && city.trim() && /^\d{6}$/.test(pin);
+  const needsSize = Boolean(gift.sizes?.length);
+  const valid =
+    name.trim() && mobile.replace(/\D/g, '').length === 10 && street.trim().length >= 5 && city.trim().length >= 2 && /^\d{6}$/.test(pin) && (!needsSize || size);
 
   const book = async () => {
     setBusy(true);
-    const order = await bookGift(gift.id, { name, mobile, street, city, pin });
-    patchAccount({ runs: account.runs - gift.runs }); // runs locked on booking
-    setBusy(false);
-    navigation.replace('GiftBooked', { giftId: gift.id, orderId: order.id });
+    try {
+      const order = await bookGift(gift.id, { name, mobile, street, city, pin }, size);
+      await refreshAccount(); // runs are taken on booking
+      navigation.replace('GiftBooked', { giftId: gift.id, orderId: order.id });
+    } catch (e) {
+      toast(errorText(e), 'error');
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
@@ -206,6 +216,12 @@ export function GiftAddressScreen({ navigation, route }: V3ScreenProps<'GiftAddr
             <Text style={[t.cap12Medium, { color: c.runs }]}>{fmt(gift.runs)} runs</Text>
           </View>
         </View>
+        {needsSize ? (
+          <View style={{ gap: 8 }}>
+            <Text style={[t.sec13Medium, { color: c.textPrimary }]}>Size</Text>
+            <Chips options={gift.sizes!.map((s) => ({ key: s, label: s }))} value={size ?? ''} onChange={setSize} />
+          </View>
+        ) : null}
         <FormField label="Name" icon={User} value={name} onChangeText={setName} autoCapitalize="words" />
         <FormField label="Mobile" icon={Phone} value={mobile} onChangeText={(v) => setMobile(formatMobile(v))} keyboardType="number-pad" maxLength={11} />
         <FormField label="House / street" icon={MapPin} value={street} onChangeText={setStreet} />
@@ -217,7 +233,7 @@ export function GiftAddressScreen({ navigation, route }: V3ScreenProps<'GiftAddr
             <FormField label="PIN code" value={pin} onChangeText={(v) => setPin(v.replace(/\D/g, '').slice(0, 6))} keyboardType="number-pad" />
           </View>
         </View>
-        <Text style={[t.cap12, { color: c.textSecondary }]}>We fill this from your profile. Change if needed.</Text>
+        <Text style={[t.cap12, { color: c.textSecondary }]}>We send the gift to this address.</Text>
       </View>
     </Page>
   );
@@ -275,10 +291,10 @@ export function GiftBookedScreen({ navigation, route }: V3ScreenProps<'GiftBooke
   );
 }
 
-const STEP_LABEL = { booked: 'Booked', packed: 'Packed', shipped: 'Shipped', delivered: 'Delivered' } as const;
+const STEP_LABEL = { booked: 'Booked', packed: 'Packed', shipped: 'Shipped', delivered: 'Delivered', cancelled: 'Cancelled' } as const;
 
 function orderSteps(o: GiftOrder, withCourier: boolean): TimelineStep[] {
-  const idx = ORDER_STEPS.indexOf(o.step);
+  const idx = ORDER_STEPS.indexOf(o.step as OrderStep);
   return ORDER_STEPS.map((s, i) => {
     const state: TimelineStep['state'] = i < idx || o.step === 'delivered' ? 'done' : i === idx ? 'current' : 'todo';
     let sub = o.dates[s] ?? '';
@@ -322,7 +338,7 @@ export function MyGiftsScreen({ navigation }: V3ScreenProps<'MyGifts'>) {
   const [filter, setFilter] = useState<'all' | 'way' | 'delivered'>('all');
   useFocusEffect(
     useCallback(() => {
-      listOrders().then(setOrders);
+      Promise.all([listOrders(), listGifts()]).then(([list]) => setOrders(list));
     }, []),
   );
   const shown = orders.filter((o) => (filter === 'all' ? true : filter === 'delivered' ? o.step === 'delivered' : o.step !== 'delivered'));
@@ -424,7 +440,7 @@ export function MyGiftDetailScreen({ navigation, route }: V3ScreenProps<'MyGiftD
             <>
               <View style={[styles.pill, { backgroundColor: c.success50, alignSelf: 'flex-start' }]}>
                 <CircleCheck size={14} color={c.successText} strokeWidth={2} />
-                <Text style={[t.sec13Semibold, { color: c.successText }]}>Delivered on {o.deliveredAt}</Text>
+                <Text style={[t.sec13Semibold, { color: c.successText }]}>Delivered on {o.dates.delivered}</Text>
               </View>
               <View style={styles.deliveryPhoto}>
                 <Camera size={28} color="#fff" strokeWidth={1.75} />

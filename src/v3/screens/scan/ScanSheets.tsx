@@ -1,4 +1,5 @@
 import React from 'react';
+import { listGifts } from '../../api/wallet';
 import { Image, Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 import Animated, { ZoomIn } from 'react-native-reanimated';
 import { CircleCheck, Coins, FileText, QrCode, ShieldCheck, Ticket, TriangleAlert, WifiOff, X } from 'lucide-react-native';
@@ -15,7 +16,7 @@ import { V3ScreenProps } from '../../navigation/types';
 // B1-05 not a GoMax coupon · B1-06 saved offline (sheets 17:12127 / 12186 /
 // 12669 / 12724 / 12245 / 12297 / 12342).
 export function ScanResultSheet({ navigation, route }: V3ScreenProps<'ScanResult'>) {
-  const { outcome, code, value = 0, usedAt } = route.params;
+  const { outcome, code, value = 0, usedAt, reason, giftId, giftName = 'this gift' } = route.params;
   const { account } = useV3();
   const scanNext = () => navigation.goBack();
   const myScans = () => navigation.replace('MyScans');
@@ -55,8 +56,8 @@ export function ScanResultSheet({ navigation, route }: V3ScreenProps<'ScanResult
         footer={
           <>
             <Button
-              label={gift ? 'Get Tool kit' : 'Scratch now'}
-              onPress={() => (gift ? navigation.replace('GiftDetail', { giftId: 'toolkit' }) : navigation.replace('ScratchEarned'))}
+              label={gift ? `Get ${giftName}` : 'Scratch now'}
+              onPress={() => (gift ? listGifts().then(() => navigation.replace('GiftDetail', { giftId: giftId ?? '' })) : navigation.replace('ScratchEarned'))}
             />
             <LinkText onPress={scanNext}>Scan next coupon</LinkText>
           </>
@@ -70,10 +71,10 @@ export function ScanResultSheet({ navigation, route }: V3ScreenProps<'ScanResult
         </Head>
         <View style={{ gap: 16 }}>
           <View style={styles.reward}>
-            <Animated.Image entering={ZoomIn.springify().damping(10)} source={gift ? d3.toolbox : d3.wrappedGift} style={{ width: 64, height: 64 }} />
-            <Text style={[t.section15, { color: c.textPrimary, textAlign: 'center' }]}>{gift ? 'You can now get Tool kit' : 'Scratch card'}</Text>
+            <Animated.Image entering={ZoomIn.springify().damping(10)} source={gift && giftId === 'toolkit' ? d3.toolbox : d3.wrappedGift} style={{ width: 64, height: 64 }} />
+            <Text style={[t.section15, { color: c.textPrimary, textAlign: 'center' }]}>{gift ? `You can now get ${giftName}` : 'Scratch card'}</Text>
             <Text style={[t.sec13, { color: c.textSecondary, textAlign: 'center' }]}>
-              {gift ? 'Your runs reached the Tool kit gift.' : 'You scanned 10 coupons today. Scratch to see your reward.'}
+              {gift ? `Your runs reached the ${giftName} gift.` : 'You scanned 10 coupons today. Scratch to see your reward.'}
             </Text>
           </View>
           {gift ? null : (
@@ -131,9 +132,9 @@ export function ScanResultSheet({ navigation, route }: V3ScreenProps<'ScanResult
         }
       >
         <Head art={d3.crossMark} artSize={56}>
-          <Text style={styles.h22}>Not a GoMax coupon</Text>
+          <Text style={styles.h22}>{reason ? `Coupon: ${reason}` : 'Not a GoMax coupon'}</Text>
           <Text style={[t.body15, { color: c.textSecondary, textAlign: 'center' }]}>
-            We could not find this code. Check the coupon and try again.
+            {reason ? 'This coupon cannot be used right now. Call the helpline if you think this is wrong.' : 'We could not find this code. Check the coupon and try again.'}
           </Text>
         </Head>
       </Sheet>

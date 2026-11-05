@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
+import { errorText } from '../../api/client';
 import { Image, Linking, Pressable, ScrollView, Share, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
@@ -13,7 +14,7 @@ import { useToast } from '../../components/Toast';
 import { FormField } from '../../components/FormField';
 import { Sheet } from '../../components/Sheet';
 import { Timeline } from '../../components/Timeline';
-import { requestWithdrawal, withdrawalById } from '../../api/withdrawals';
+import { WithdrawLimits, requestWithdrawal, withdrawLimits, withdrawalById } from '../../api/withdrawals';
 import { WITHDRAW_MIN, fmt, useV3 } from '../../state/Store';
 import { V3ScreenProps } from '../../navigation/types';
 
@@ -23,17 +24,24 @@ export function WithdrawScreen({ navigation }: V3ScreenProps<'Withdraw'>) {
   const [upi, setUpi] = useState(account.upi?.id ?? '');
   const [amount, setAmount] = useState(String(Math.min(1000, account.points)));
   const [focus, setFocus] = useState(false);
+  const [limits, setLimits] = useState<WithdrawLimits | null>(null);
+  useEffect(() => {
+    withdrawLimits().then(setLimits);
+  }, []);
+  const min = limits?.minPoints ?? WITHDRAW_MIN;
   const n = Number(amount.replace(/\D/g, '')) || 0;
   const chips = [500, 1000, account.points].filter((v, i, a) => v <= account.points && a.indexOf(v) === i);
-  const tooLow = n > 0 && n < WITHDRAW_MIN;
-  const tooHigh = n > account.points;
-  const ok = /^[\w.-]{2,}@[a-z]{2,}$/i.test(upi.trim()) && n >= WITHDRAW_MIN && !tooHigh;
+  const tooLow = n > 0 && n < min;
+  const overBalance = n > account.points;
+  const overLimit = limits ? n > limits.maxPerRequest : false;
+  const tooHigh = overBalance || overLimit;
+  const ok = /^[\w.-]{2,}@[a-z]{2,}$/i.test(upi.trim()) && n >= min && !tooHigh;
 
   return (
     <Page
       bg={c.surfacePage}
       footerBordered
-      footer={<Button label={`Withdraw ₹${fmt(n)}`} disabled={!ok} onPress={() => navigation.navigate('WithdrawConfirm', { amount: n })} />}
+      footer={<Button label={`Withdraw ₹${fmt(n)}`} disabled={!ok} onPress={() => navigation.navigate('WithdrawConfirm', { amount: n, upiId: upi.trim() })} />}
     >
       <CenterBar title="Withdraw" />
       <View style={{ gap: 14, paddingTop: 8 }}>
@@ -75,7 +83,13 @@ export function WithdrawScreen({ navigation }: V3ScreenProps<'Withdraw'>) {
           />
         </View>
         <Text style={[t.cap12, { color: tooLow || tooHigh ? c.dangerText : c.textSecondary }]}>
-          {tooHigh ? `You have only ₹${fmt(account.points)}` : tooLow ? 'Min ₹500' : 'Min ₹500 · Paid to your UPI in 24–48 hrs'}
+          {overBalance
+            ? `You have only ₹${fmt(account.points)}`
+            : overLimit
+              ? `Up to ₹${fmt(limits!.maxPerRequest)} at a time`
+              : tooLow
+                ? `Min ₹${fmt(min)}`
+                : `Min ₹${fmt(min)}${limits ? ` · Max ₹${fmt(limits.maxPerRequest)} at a time, ₹${fmt(limits.maxPerMonth)} a month` : ''} · Paid to your UPI in 24–48 hrs`}
         </Text>
       </View>
     </Page>
@@ -84,15 +98,22 @@ export function WithdrawScreen({ navigation }: V3ScreenProps<'Withdraw'>) {
 
 // B3-02 Withdraw · confirm (sheet) (17:19079)
 export function WithdrawConfirmSheet({ navigation, route }: V3ScreenProps<'WithdrawConfirm'>) {
-  const { account, patchAccount } = useV3();
-  const { amount } = route.params;
+  const { account, refreshAccount } = useV3();
+  const toast = useToast();
+  const { amount, upiId } = route.params;
   const [busy, setBusy] = useState(false);
-  const upiId = account.upi?.id ?? 'ram@ybl';
-  const upiName = account.upi?.name ?? 'RAM KUMAR';
+  // Only the UPI saved on the account has a checked name; a new one has none yet.
+  const upiName = account.upi?.id === upiId ? account.upi.name : '';
   const go = async () => {
     setBusy(true);
-    await requestWithdrawal(amount, upiId, upiName);
-    patchAccount({ points: account.points - amount }); // points are locked on request
+    try {
+      await requestWithdrawal(amount, upiId);
+      await refreshAccount(); // points are locked on request
+    } catch (e) {
+      toast(errorText(e), 'error');
+      setBusy(false);
+      return;
+    }
     setBusy(false);
     navigation.reset({ index: 1, routes: [{ name: 'Tabs', params: { screen: 'Wallet' } }, { name: 'WithdrawDone', params: { amount } }] });
   };
@@ -115,7 +136,7 @@ export function WithdrawConfirmSheet({ navigation, route }: V3ScreenProps<'Withd
       </View>
       <View style={styles.summary}>
         <SumRow label="Amount" value={`₹${fmt(amount)}`} />
-        <SumRow label="Pay to" value={`${upiId} · ${upiName}`} />
+        <SumRow label="Pay to" value={upiName ? `${upiId} · ${upiName}` : upiId} />
       </View>
       <View style={{ height: 10 }} />
     </Sheet>

@@ -1,4 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { useToast } from '../../components/Toast';
+import { ApiError, errorText } from '../../api/client';
 import { Image, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
@@ -10,7 +12,7 @@ import { Button } from '../../components/Button';
 import { LinkText } from '../../components/Layout';
 import { Sheet } from '../../components/Sheet';
 import { SpinWheel, WHEEL_SEGMENTS, WheelSegment } from '../../components/SpinWheel';
-import { SPINS_BY_RANK, hms, logGame, secondsToMidnight, segmentFor, spin } from '../../api/games';
+import { hms, secondsToMidnight, segmentFor, spin } from '../../api/games';
 import { rankFor } from '../../data/ranks';
 import { fmt, useV3 } from '../../state/Store';
 import { V3ScreenProps } from '../../navigation/types';
@@ -35,7 +37,8 @@ export function SpinWheelScreen({ navigation, route }: V3ScreenProps<'SpinWheel'
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
   const { account, patchAccount } = useV3();
-  const total = SPINS_BY_RANK[rankFor(account.lifetimePoints)];
+  const toast = useToast();
+  const total = account.spinsTotal ?? account.spinsLeft;
   const left = Math.min(account.spinsLeft, total);
   const locked = route.name === 'SpinNoneLeft' || left <= 0;
   const countdown = useCountdown();
@@ -55,7 +58,16 @@ export function SpinWheelScreen({ navigation, route }: V3ScreenProps<'SpinWheel'
     if (spinning) return;
     if (left <= 0) return navigation.replace('SpinNoneLeft');
     setSpinning(true);
-    const prize = await spin(); // server decides — the wheel only lands on it
+    let res: Awaited<ReturnType<typeof spin>>;
+    try {
+      res = await spin(); // server decides — the wheel only lands on it
+    } catch (e) {
+      setSpinning(false);
+      if (e instanceof ApiError && e.code === 'no_spins_left') return navigation.replace('SpinNoneLeft');
+      toast(errorText(e), 'error');
+      return;
+    }
+    const prize = res.prize;
     const idx = segmentFor(prize);
     const from = rotation % 360;
     const target = 360 * 5 + ((((-idx * 45 - from) % 360) + 360) % 360);
@@ -67,8 +79,7 @@ export function SpinWheelScreen({ navigation, route }: V3ScreenProps<'SpinWheel'
       if (p < 1) raf.current = requestAnimationFrame(tick);
       else {
         setSpinning(false);
-        patchAccount({ spinsLeft: left - 1, runs: account.runs + prize.amount });
-        logGame({ kind: 'spin', title: 'Spin the wheel', sub: 'Just now', prize });
+        patchAccount({ spinsLeft: res.spinsLeft, runs: res.runs });
         navigation.navigate('SpinResult', { prize: String(prize.amount) });
       }
     };

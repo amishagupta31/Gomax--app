@@ -1,15 +1,9 @@
-// C3 Invite & earn — stand-ins for GET /me/referrals and the invite code.
+// C3 Invite & earn. GET /me/referrals. The invite code is on the signed-in user.
 // Share link / QR payload carries the invite code only (C3 dev notes).
+import { api, read } from './client';
 
-const wait = (ms = 200) => new Promise((r) => setTimeout(r, ms));
-
-/** Runs per friend who scans their 1st coupon (admin-set; CLIENT to confirm 50). */
-export const RUNS_PER_INVITE = 50;
-
-export function inviteCode(name?: string) {
-  const letters = (name ?? 'Ram').replace(/[^a-z]/gi, '').toUpperCase().slice(0, 3).padEnd(3, 'X');
-  return `${letters}245`;
-}
+/** Runs per friend who scans their 1st coupon (admin-set; refreshed by referrals()). */
+export let RUNS_PER_INVITE = 50;
 
 export const inviteLink = (code: string) => `https://gomax.app/i/${code}`;
 
@@ -18,7 +12,10 @@ export const inviteMessage = (code: string) =>
 
 export type Referrals = { count: number; runsEarned: number };
 
-export async function referrals(isNew: boolean): Promise<Referrals> {
-  await wait();
-  return isNew ? { count: 0, runsEarned: 0 } : { count: 12, runsEarned: 4250 };
+export async function referrals(): Promise<Referrals> {
+  return read(async () => {
+    const r = await api<{ joined: number; runsEarned: number; runsPerInvite: number }>('/me/referrals');
+    RUNS_PER_INVITE = r.runsPerInvite;
+    return { count: r.joined, runsEarned: r.runsEarned };
+  }, { count: 0, runsEarned: 0 });
 }

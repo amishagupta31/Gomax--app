@@ -1,4 +1,6 @@
 import React, { useCallback, useMemo, useRef, useState } from 'react';
+import { useToast } from '../../components/Toast';
+import { errorText } from '../../api/client';
 import { Image, PanResponder, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -16,10 +18,8 @@ import { Bar, Pill, Rays } from '../../components/GameArt';
 import {
   Prize,
   ScratchCard,
-  claimScratchCard,
   firstNewCard,
   listScratchCards,
-  logGame,
   revealScratchCard,
   scratchCard,
   scratchWon,
@@ -32,8 +32,8 @@ import { V3ScreenProps } from '../../navigation/types';
 export function ScratchEarnedScreen({ navigation }: V3ScreenProps<'ScratchEarned'>) {
   const insets = useSafeAreaInsets();
   const { account } = useV3();
-  const open = () => {
-    const id = firstNewCard();
+  const open = async () => {
+    const id = await firstNewCard();
     if (id) navigation.replace('ScratchCard', { cardId: id });
     else navigation.replace('ScratchCards');
   };
@@ -72,7 +72,7 @@ export function ScratchCardsScreen({ navigation }: V3ScreenProps<'ScratchCards'>
   useFocusEffect(
     useCallback(() => {
       let live = true;
-      listScratchCards(account.todayCoupons).then((r) => live && setCards(r));
+      listScratchCards().then((r) => live && setCards(r));
       return () => {
         live = false;
       };
@@ -217,7 +217,8 @@ const BRUSH = 24;
 
 export function ScratchCardScreen({ navigation, route }: V3ScreenProps<'ScratchCard'>) {
   const insets = useSafeAreaInsets();
-  const { account, patchAccount } = useV3();
+  const { account, refreshAccount } = useV3();
+  const toast = useToast();
   const { cardId } = route.params;
   const existing = scratchCard(cardId);
   const [prize, setPrize] = useState<Prize | null>(existing?.state === 'won' ? existing.prize : null);
@@ -232,25 +233,26 @@ export function ScratchCardScreen({ navigation, route }: V3ScreenProps<'ScratchC
   // The prize is fixed server-side; fetch it before the first stroke so the
   // face under the cover is real.
   React.useEffect(() => {
-    if (!prize) revealScratchCard(cardId).then(setPrize);
+    if (!prize) {
+      revealScratchCard(cardId)
+        .then((p) => {
+          setPrize(p);
+          refreshAccount(); // the server has added the prize to the wallet
+        })
+        .catch((e) => {
+          toast(errorText(e), 'error');
+          navigation.goBack();
+        });
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const finish = useCallback(() => {
     if (done.current || !prize) return;
     done.current = true;
-    claimScratchCard(cardId);
-    const runs = prize.kind === 'runs';
-    patchAccount({
-      runs: account.runs + (runs ? prize.amount : 0),
-      points: account.points + (runs ? 0 : prize.amount),
-      lifetimePoints: account.lifetimePoints + (runs ? 0 : prize.amount),
-      scratchCardsReady: Math.max(0, account.scratchCardsReady - 1),
-    });
-    setTotal(account.runs + (runs ? prize.amount : 0));
-    logGame({ kind: 'scratch', title: 'Scratch card', sub: 'Just now', prize });
+    setTotal(account.runs);
     setRevealed(true);
-  }, [account, patchAccount, prize, cardId]);
+  }, [account.runs, prize]);
 
   const add = (x: number, y: number) => {
     const l = last.current;

@@ -1,4 +1,7 @@
 import React, { useRef, useState } from 'react';
+import { useToast } from '../../components/Toast';
+import { ApiError, errorText } from '../../api/client';
+import { useFocusEffect } from '@react-navigation/native';
 import { Image, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
@@ -6,13 +9,13 @@ import { CameraView, useCameraPermissions } from 'expo-camera';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, { ZoomIn } from 'react-native-reanimated';
 import Svg, { Rect } from 'react-native-svg';
-import { ArrowLeft, Camera, Check, CircleCheck, CircleHelp, Lock, MapPin, RefreshCw, ShieldCheck, X } from 'lucide-react-native';
+import { ArrowLeft, Camera, Check, CircleCheck, CircleHelp, Lock, RefreshCw, ShieldCheck, X } from 'lucide-react-native';
 import { c, t } from '../../theme';
 import { d3 } from '../../assets';
 import { Button } from '../../components/Button';
 import { LinkText } from '../../components/Layout';
 import { Bar, Pill } from '../../components/GameArt';
-import { STREAK_REWARDS, uploadStreakPhoto } from '../../api/games';
+import { STREAK_REWARDS, loadStreakRewards, uploadStreakPhoto } from '../../api/games';
 import { useV3 } from '../../state/Store';
 import { V3ScreenProps } from '../../navigation/types';
 
@@ -27,7 +30,12 @@ const nextReward = (done: number) => STREAK_REWARDS.find((r) => r.days > done) ?
 // C2-13 Photo streak (17:14163)
 export function PhotoStreakScreen({ navigation }: V3ScreenProps<'PhotoStreak'>) {
   const insets = useSafeAreaInsets();
-  const { account } = useV3();
+  const { account, patchAccount } = useV3();
+  useFocusEffect(
+    React.useCallback(() => {
+      loadStreakRewards().then((s) => s && patchAccount({ streakDay: s.day, streakDoneToday: s.doneToday }));
+    }, [patchAccount]),
+  );
   const done = account.streakDay;
   const today = account.streakDoneToday;
   const dayNo = today ? done : done + 1;
@@ -128,7 +136,8 @@ export function PhotoStreakScreen({ navigation }: V3ScreenProps<'PhotoStreak'>) 
 // C2-14 Photo streak · camera (17:14265). Camera only — no gallery picker.
 export function PhotoStreakCameraScreen({ navigation }: V3ScreenProps<'PhotoStreakCamera'>) {
   const insets = useSafeAreaInsets();
-  const { account, patchAccount } = useV3();
+  const { patchAccount } = useV3();
+  const toast = useToast();
   const [perm, requestPerm] = useCameraPermissions();
   const [facing, setFacing] = useState<'back' | 'front'>('back');
   const [busy, setBusy] = useState(false);
@@ -150,8 +159,14 @@ export function PhotoStreakCameraScreen({ navigation }: V3ScreenProps<'PhotoStre
       uri = undefined; // web / simulator: continue with the placeholder
     }
     const takenAt = new Date();
-    const res = await uploadStreakPhoto(uri ?? null, account.streakDay);
-    patchAccount({ streakDay: res.day, streakDoneToday: true });
+    try {
+      const res = await uploadStreakPhoto(uri ?? null, takenAt);
+      patchAccount({ streakDay: res.day, streakDoneToday: res.doneToday });
+    } catch (e) {
+      setBusy(false);
+      toast(errorText(e), e instanceof ApiError && e.status === 0 ? 'offline' : 'error');
+      return;
+    }
     setBusy(false);
     navigation.replace('PhotoStreakUploaded', { uri, takenAt: takenAt.toISOString() });
   };
@@ -182,10 +197,6 @@ export function PhotoStreakCameraScreen({ navigation }: V3ScreenProps<'PhotoStre
             {!live ? <Camera size={32} color="#fff" strokeWidth={1.75} /> : null}
             <View style={styles.stampChip}>
               <Text style={[t.sec13Semibold, { color: '#fff' }]}>{stamp(now)}</Text>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                <MapPin size={12} color="#fff" strokeWidth={2} />
-                <Text style={[t.cap12, { color: '#fff' }]}>Amritsar, Punjab</Text>
-              </View>
             </View>
           </View>
           <View style={[styles.camHint, { backgroundColor: 'rgba(255,255,255,0.12)', marginTop: 52 }]}>

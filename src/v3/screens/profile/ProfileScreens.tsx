@@ -1,4 +1,13 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
+import { loadWithdrawal } from '../../api/withdrawals';
+import { listGifts, listOrders } from '../../api/wallet';
+import { listChallenges } from '../../api/games';
+import { saveSettings } from '../../api/account';
+import { daysAgo } from '../../api/client';
+import { artFor } from '../../api/art';
+import { ServerNote, listNotifications, markRead } from '../../api/notifications';
+import { fmtDayTime } from '../../api/coupons';
 import { Image, Linking, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
@@ -35,7 +44,7 @@ import { CenterBar } from '../../components/Layout';
 import { Chips } from '../../components/Chips';
 import { Bar, Pill } from '../../components/GameArt';
 import { RANKS, nextRank, rankFor } from '../../data/ranks';
-import { inviteCode } from '../../api/invite';
+import { Referrals, referrals } from '../../api/invite';
 import { formatMobile } from '../../api/auth';
 import { WA_TEMPLATES, waTemplate } from '../../data/waTemplates';
 import { fmt, useV3 } from '../../state/Store';
@@ -66,9 +75,13 @@ function Row({ icon: Icon, title, sub, onPress, last }: { icon: LucideIcon; titl
 export function ProfileScreen() {
   const nav = useV3Nav();
   const insets = useSafeAreaInsets();
-  const { user, setUser, account, patchAccount } = useV3();
-  const name = user?.name ?? 'Ram Kumar';
-  const mobile = user?.mobile ?? '9876543210';
+  const { user, signOut, account, patchAccount } = useV3();
+  const name = user?.name ?? '';
+  const mobile = user?.mobile ?? '';
+  const [refs, setRefs] = useState<Referrals | null>(null);
+  useEffect(() => {
+    referrals().then(setRefs);
+  }, []);
   const lp = account.lifetimePoints;
   const rank = rankFor(lp);
   const next = nextRank(rank);
@@ -76,7 +89,7 @@ export function ProfileScreen() {
   const to = next ? RANKS[next].min : from;
   const lang = account.language ?? 'hi';
   const wa = account.whatsappUpdates ?? true;
-  const code = inviteCode(user?.name);
+  const code = user?.inviteCode ?? '';
 
   return (
     <View style={{ flex: 1, backgroundColor: c.surfaceCard }}>
@@ -99,7 +112,7 @@ export function ProfileScreen() {
               <Camera size={14} color="#fff" strokeWidth={2} />
             </View>
             <Text style={[t.title20, { color: '#fff', marginTop: 6 }]}>{name}</Text>
-            <Text style={[t.cap12, { color: 'rgba(255,255,255,0.8)' }]}>+91 {formatMobile(mobile)} · Amritsar</Text>
+            <Text style={[t.cap12, { color: 'rgba(255,255,255,0.8)' }]}>+91 {formatMobile(mobile)}{user?.city ? ` · ${user.city}` : ''}</Text>
           </View>
           <Pressable style={styles.rankCard} onPress={() => nav.navigate('RankBenefits')}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
@@ -146,7 +159,10 @@ export function ProfileScreen() {
             </View>
             <View style={styles.switch}>
               {LANGS.map((l) => (
-                <Pressable key={l.key} style={[styles.seg, lang === l.key && styles.segOn]} onPress={() => patchAccount({ language: l.key })}>
+                <Pressable key={l.key} style={[styles.seg, lang === l.key && styles.segOn]} onPress={() => {
+                  patchAccount({ language: l.key });
+                  saveSettings({ language: l.key }).catch(() => undefined);
+                }}>
                   <Text style={[lang === l.key ? t.sec13Semibold : t.sec13Medium, { color: lang === l.key ? c.textPrimary : c.textSecondary }]}>{l.label}</Text>
                 </Pressable>
               ))}
@@ -154,7 +170,7 @@ export function ProfileScreen() {
           </View>
 
           <View style={styles.group}>
-            <Row icon={Users} title="Joined with your code" sub="12 people · 4,250 runs" onPress={() => nav.navigate('InviteEarn')} />
+            <Row icon={Users} title="Joined with your code" sub={`${fmt(refs?.count ?? 0)} people · ${fmt(refs?.runsEarned ?? 0)} runs`} onPress={() => nav.navigate('InviteEarn')} />
             <Row icon={UserPlus} title="Invite & earn" sub={`Code ${code}`} onPress={() => nav.navigate('InviteEarn')} />
             <Row icon={History} title="My scans" sub="All coupons you scanned" onPress={() => nav.navigate('MyScans')} />
             <Row icon={Pencil} title="Edit details" sub="Name, city, birthday" onPress={() => nav.navigate('PanUpiOverview')} last />
@@ -178,7 +194,7 @@ export function ProfileScreen() {
               icon={LogOut}
               title="Log out"
               onPress={() => {
-                setUser(null);
+                signOut();
                 nav.reset({ index: 0, routes: [{ name: 'Login' }] });
               }}
               last
@@ -207,15 +223,34 @@ export function NotificationsScreen({ navigation }: V3ScreenProps<'Notifications
   const insets = useSafeAreaInsets();
   const [kind, setKind] = useState<NoteKind | 'all'>('all');
   const [read, setRead] = useState<Record<string, boolean>>({});
-  const notes: Note[] = [
-    { id: 'n1', kind: 'money', art: d3.creditCard, title: '₹500 sent to your UPI', sub: 'UTR 4290 1188 7765 · ram@ybl', time: '10:42 am', day: 'Today', unread: true, open: () => navigation.navigate('WithdrawPaid', { id: 'W-3001' }) },
-    { id: 'n2', kind: 'games', art: d3.ticket, title: 'You got a scratch card', sub: '10 coupons scanned today', time: '9:15 am', day: 'Today', unread: true, open: () => navigation.navigate('ScratchCards') },
-    { id: 'n3', kind: 'money', art: d3.coin, title: '7 coupons added · +140 pts', sub: 'Daily summary', time: 'Yesterday 9 pm', day: 'Today', open: () => navigation.navigate('MyScans') },
-    { id: 'n4', kind: 'gifts', art: d3.deliveryTruck, title: 'Your gift is on the way', sub: 'Pressure cooker · AWB 1Z98 2211 · Delhivery', time: '28 Sep', day: 'Earlier', open: () => navigation.navigate('MyGiftDetail', { orderId: 'G-1042' }) },
-    { id: 'n5', kind: 'games', art: d3.crown, title: 'You are now Kaarigar!', sub: '4 spins a day + 10% more runs', time: '25 Sep', day: 'Earlier', open: () => navigation.navigate('RankBenefits') },
-    { id: 'n6', kind: 'games', art: d3.trophy, title: 'Challenge won · +100 runs', sub: 'Scan 20 coupons this week', time: '22 Sep', day: 'Earlier', open: () => navigation.navigate('ChallengeCompleted', { challengeId: 'd1' }) },
-    { id: 'n7', kind: 'money', art: d3.warning, title: 'Add your UPI to get cash', sub: 'Takes 1 minute', time: '20 Sep', day: 'Earlier', open: () => navigation.navigate('AddUpi') },
-  ];
+  const [server, setServer] = useState<ServerNote[]>([]);
+  useFocusEffect(
+    React.useCallback(() => {
+      listNotifications().then(setServer);
+    }, []),
+  );
+  // Data the target screen reads must be loaded before it opens.
+  const openLink = async (link: ServerNote['link']) => {
+    if (!link) return;
+    if (link.route === 'MyGiftDetail') await Promise.all([listOrders(), listGifts()]);
+    if (link.route === 'ChallengeCompleted' || link.route === 'ChallengeDetail') await listChallenges();
+    if (link.route.startsWith('Withdraw') && typeof link.params?.id === 'string') await loadWithdrawal(link.params.id).catch(() => undefined);
+    (navigation.navigate as (route: string, params?: object) => void)(link.route, link.params);
+  };
+  const notes: Note[] = server.map((n) => ({
+    id: n.id,
+    kind: n.kind,
+    art: artFor(n.art),
+    title: n.title,
+    sub: n.body ?? '',
+    time: fmtDayTime(new Date(n.at).getTime()),
+    day: daysAgo(n.at) <= 0 ? 'Today' : 'Earlier',
+    unread: !n.read,
+    open: () => {
+      if (!n.read) markRead(n.id);
+      openLink(n.link);
+    },
+  }));
   const rows = notes.filter((n) => kind === 'all' || n.kind === kind);
 
   return (
@@ -235,6 +270,9 @@ export function NotificationsScreen({ navigation }: V3ScreenProps<'Notifications
             <Chips options={FILTERS} value={kind} onChange={setKind} />
           </View>
         </ScrollView>
+        {!rows.length ? (
+          <Text style={[t.sec13, { color: c.textSecondary, textAlign: 'center', marginTop: 40 }]}>No notifications yet.</Text>
+        ) : null}
         {(['Today', 'Earlier'] as const).map((d) => {
           const list = rows.filter((n) => n.day === d);
           if (!list.length) return null;
@@ -283,11 +321,14 @@ export function WhatsAppMessagesScreen({ navigation }: V3ScreenProps<'WhatsAppMe
         <View style={[styles.card, { flexDirection: 'row', alignItems: 'center', marginTop: 8 }]}>
           <View style={{ flex: 1, gap: 2 }}>
             <Text style={[t.body15Semibold, { color: c.textPrimary }]}>Send me updates on WhatsApp</Text>
-            <Text style={[t.cap12, { color: c.textSecondary }]}>+91 {formatMobile(user?.mobile ?? '9876543210')}</Text>
+            <Text style={[t.cap12, { color: c.textSecondary }]}>+91 {formatMobile(user?.mobile ?? '')}</Text>
           </View>
           <Switch
             value={on}
-            onValueChange={(v) => patchAccount({ whatsappUpdates: v })}
+            onValueChange={(v) => {
+              patchAccount({ whatsappUpdates: v });
+              saveSettings({ whatsappOptIn: v }).catch(() => undefined);
+            }}
             trackColor={{ true: c.whatsapp, false: c.borderStrong }}
             thumbColor="#fff"
           />
@@ -319,8 +360,8 @@ export function WhatsAppMessageScreen({ navigation, route }: V3ScreenProps<'What
   const fill = (s: string) =>
     s
       .replace('{name}', (user?.name ?? 'Ram').split(' ')[0])
-      .replace('{mobile}', formatMobile(user?.mobile ?? '9876543210'))
-      .replace('{code}', inviteCode(user?.name));
+      .replace('{mobile}', formatMobile(user?.mobile ?? ''))
+      .replace('{code}', user?.inviteCode ?? '');
 
   return (
     <View style={{ flex: 1, backgroundColor: WA.wall }}>

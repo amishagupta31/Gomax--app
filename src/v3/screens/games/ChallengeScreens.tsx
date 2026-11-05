@@ -1,4 +1,8 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
+import { referrals } from '../../api/invite';
+import { RANK_ORDER, rankFor } from '../../data/ranks';
+import { useToast } from '../../components/Toast';
+import { ApiError, errorText } from '../../api/client';
 import { Image, Pressable, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -14,7 +18,7 @@ import { CenterBar, LinkText } from '../../components/Layout';
 import { StaticTabBar } from '../../components/TabBar';
 import { Glow } from '../../components/Glow';
 import { Bar, Pill, ProgressRing } from '../../components/GameArt';
-import { BADGES, CHALLENGES, Challenge, QUESTS, TONE, challengeById, listChallenges, logGame } from '../../api/games';
+import { Challenge, Quest, TONE, badgesFor, challengeById, claimChallenge, listChallenges, listQuests, loadChallenge, secondsToMidnight } from '../../api/games';
 import { useV3 } from '../../state/Store';
 import { V3Nav, V3ScreenProps } from '../../navigation/types';
 
@@ -43,20 +47,51 @@ function milestoneFill(ch: Challenge) {
 // C2-08 Challenges home (17:13757)
 export function ChallengesHomeScreen({ navigation }: V3ScreenProps<'ChallengesHome'>) {
   const insets = useSafeAreaInsets();
-  const [live, setLive] = useState<Challenge[]>(CHALLENGES);
+  const { account } = useV3();
+  const [live, setLive] = useState<Challenge[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  const [quests, setQuests] = useState<Quest[]>([]);
+  const [joined, setJoined] = useState(0);
   useFocusEffect(
     useCallback(() => {
       let on = true;
-      listChallenges().then((r) => on && setLive(r.live));
+      listChallenges().then((r) => {
+        if (!on) return;
+        setLive(r.live);
+        setLoaded(true);
+      });
+      listQuests().then((q) => on && setQuests(q));
+      referrals().then((r) => on && setJoined(r.count));
       return () => {
         on = false;
       };
     }, []),
   );
   const active = live.find((x) => x.id === 'weekly') ?? live[0];
+  if (!active) {
+    return (
+      <View style={{ flex: 1, backgroundColor: c.navy900, paddingTop: insets.top }}>
+        <StatusBar style="light" />
+        <View style={styles.darkBar}>
+          <Pressable style={styles.glass} onPress={() => navigation.goBack()} accessibilityLabel="Back">
+            <ArrowLeft size={20} color="#fff" strokeWidth={2} />
+          </Pressable>
+          <Text style={[t.title18, styles.darkTitle]}>Challenges</Text>
+          <View style={{ width: 40 }} />
+        </View>
+        {loaded ? <Text style={[t.body15, { color: '#fff', textAlign: 'center', marginTop: 40 }]}>No challenges right now. Check back soon!</Text> : null}
+      </View>
+    );
+  }
   const fill = milestoneFill(active);
   const steps = active.steps ?? [];
-  const tone = (q: (typeof QUESTS)[number]) => q.progress >= q.goal;
+  const tone = (q: Quest) => q.progress >= q.goal;
+  const badges = badgesFor({
+    lifetimePoints: account.lifetimePoints,
+    streakDay: account.streakDay,
+    joined,
+    rankIndex: RANK_ORDER.indexOf(rankFor(account.lifetimePoints)),
+  });
 
   return (
     <View style={{ flex: 1, backgroundColor: c.surfaceCard }}>
@@ -78,7 +113,7 @@ export function ChallengesHomeScreen({ navigation }: V3ScreenProps<'ChallengesHo
             <View style={styles.activeGlow} />
             <View style={{ flexDirection: 'row' }}>
               <View style={{ flex: 1, gap: 10 }}>
-                <Pill icon={Clock} label={`${active.tag} · 3 days left`} bg="rgba(255,255,255,0.14)" ink="#fff" />
+                <Pill icon={Clock} label={active.daysLeft != null ? `${active.tag} · ${active.daysLeft} day${active.daysLeft === 1 ? '' : 's'} left` : active.tag} bg="rgba(255,255,255,0.14)" ink="#fff" />
                 <Text style={[t.hero24, { color: '#fff', lineHeight: 28 }]}>{active.short}</Text>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                   <Image source={d3.wrappedGift} style={{ width: 20, height: 20 }} />
@@ -87,7 +122,7 @@ export function ChallengesHomeScreen({ navigation }: V3ScreenProps<'ChallengesHo
               </View>
               <ProgressRing size={112} stroke={10} value={active.progress / active.goal} style={{ marginTop: 28 }}>
                 <Text style={styles.ringBig}>{progressLabel(active)}</Text>
-                <Text style={[t.cap12, { color: '#fff' }]}>coupons</Text>
+                <Text style={[t.cap12, { color: '#fff' }]}>{active.ringSub ?? 'coupons'}</Text>
               </ProgressRing>
             </View>
             <View style={styles.milestones}>
@@ -137,9 +172,9 @@ export function ChallengesHomeScreen({ navigation }: V3ScreenProps<'ChallengesHo
 
           <View style={styles.h}>
             <Text style={[t.section15, { color: c.textPrimary }]}>Today’s quests</Text>
-            <Pill icon={Clock} label="Resets in 6h" bg={c.surfaceMuted} ink={c.textSecondary} />
+            <Pill icon={Clock} label={`Resets in ${Math.max(1, Math.ceil(secondsToMidnight() / 3600))}h`} bg={c.surfaceMuted} ink={c.textSecondary} />
           </View>
-          {QUESTS.map((q) => {
+          {quests.map((q) => {
             const done = tone(q);
             return (
               <Pressable
@@ -182,10 +217,10 @@ export function ChallengesHomeScreen({ navigation }: V3ScreenProps<'ChallengesHo
 
           <View style={styles.h}>
             <Text style={[t.section15, { color: c.textPrimary }]}>My badges</Text>
-            <Text style={[t.sec13, { color: c.textSecondary }]}>4 of 12</Text>
+            <Text style={[t.sec13, { color: c.textSecondary }]}>{badges.filter((b) => b.got).length} of {badges.length}</Text>
           </View>
           <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-            {BADGES.map((b) => (
+            {badges.map((b) => (
               <View key={b.id} style={{ width: 56, alignItems: 'center', gap: 4, opacity: b.got ? 1 : 0.4 }}>
                 <View style={[styles.badge, { backgroundColor: b.tint }]}>
                   <Image source={b.art} style={{ width: 34, height: 34 }} />
@@ -248,7 +283,7 @@ function LevelMap() {
 export function AllChallengesScreen({ navigation }: V3ScreenProps<'AllChallenges'>) {
   const insets = useSafeAreaInsets();
   const [tab, setTab] = useState<'live' | 'done'>('live');
-  const [data, setData] = useState<{ live: Challenge[]; done: Challenge[] }>({ live: CHALLENGES, done: [] });
+  const [data, setData] = useState<{ live: Challenge[]; done: Challenge[] }>({ live: [], done: [] });
   useFocusEffect(
     useCallback(() => {
       let on = true;
@@ -324,11 +359,18 @@ function ChallengeCard({ ch, onPress }: { ch: Challenge; onPress: () => void }) 
 // C2-10 Challenge detail · weekly (17:14042)
 export function ChallengeDetailScreen({ navigation, route }: V3ScreenProps<'ChallengeDetail'>) {
   const insets = useSafeAreaInsets();
-  const ch = challengeById(route.params.challengeId);
-  const steps = ch.steps ?? [{ at: ch.goal, title: ch.title, sub: '' }];
+  const [ch, setCh] = useState(() => challengeById(route.params.challengeId));
+  useEffect(() => {
+    let on = true;
+    loadChallenge(route.params.challengeId).then((x) => on && setCh(x));
+    return () => {
+      on = false;
+    };
+  }, [route.params.challengeId]);
+  const steps = ch.steps?.length ? ch.steps : [{ at: ch.goal, title: ch.title, sub: '' }];
   const current = steps.findIndex((s) => ch.progress < s.at);
   const complete = ch.progress >= ch.goal;
-  const avs = ['SK', 'AK', 'MS'];
+  const avs: string[] = []; // the API gives a count only, not who the people are
 
   return (
     <View style={{ flex: 1, backgroundColor: c.surfaceCard }}>
@@ -440,13 +482,21 @@ const CONFETTI: [number, number, string, number][] = [
 // C2-11 Challenge completed (17:14105)
 export function ChallengeCompletedScreen({ navigation, route }: V3ScreenProps<'ChallengeCompleted'>) {
   const insets = useSafeAreaInsets();
-  const { account, patchAccount } = useV3();
+  const { refreshAccount } = useV3();
+  const toast = useToast();
   const ch = challengeById(route.params.challengeId);
-  const amount = Number(ch.reward.match(/\d+/)?.[0] ?? 0);
-  const collect = () => {
+  const amount = ch.rewardRuns;
+  const collect = async () => {
     if (!ch.done) {
-      patchAccount({ runs: account.runs + amount, scratchCardsReady: account.scratchCardsReady + 1 });
-      logGame({ kind: 'challenge', title: `${ch.tag} challenge won`, sub: ch.short, prize: { kind: 'runs', amount } });
+      try {
+        await claimChallenge(ch.id);
+      } catch (e) {
+        if (!(e instanceof ApiError && e.code === 'already_claimed')) {
+          toast(errorText(e), 'error');
+          return;
+        }
+      }
+      await refreshAccount();
     }
     navigation.navigate('ChallengesHome');
   };
@@ -455,8 +505,8 @@ export function ChallengeCompletedScreen({ navigation, route }: V3ScreenProps<'C
 
   const stats = [
     { art: d3.wrappedGift, big: `+${amount}`, small: 'runs' },
-    { art: d3.sportsMedal, big: 'New', small: 'badge' },
-    { art: d3.ticket, big: '+1', small: 'scratch card' },
+    ...(ch.bonus ? [{ art: d3.sportsMedal, big: 'New', small: 'badge' }] : []),
+    ...(ch.rewardScratchCards ? [{ art: d3.ticket, big: `+${ch.rewardScratchCards}`, small: 'scratch card' }] : []),
   ];
   return (
     <View style={{ flex: 1, backgroundColor: c.navy900, paddingTop: insets.top }}>

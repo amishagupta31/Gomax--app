@@ -1,4 +1,6 @@
 import React, { useState } from 'react';
+import { errorText } from '../../api/client';
+import { useToast } from '../../components/Toast';
 import { Image, StyleSheet, View } from 'react-native';
 import { d3 } from '../../assets';
 import { Page, TopBar, Stepper, Heading } from '../../components/Layout';
@@ -10,7 +12,8 @@ import { V3ScreenProps } from '../../navigation/types';
 
 // A1-08 Sign up · birthday (17:11503). Both dates optional; Skip also finishes.
 export function SignupBirthdayScreen({ navigation }: V3ScreenProps<'SignupBirthday'>) {
-  const { signupDraft, setSignupDraft, setUser } = useV3();
+  const { signupDraft, setSignupDraft, setUser, refreshAccount } = useV3();
+  const toast = useToast();
   const [dob, setDob] = useState('');
   const [anniv, setAnniv] = useState('');
   const [busy, setBusy] = useState(false);
@@ -20,16 +23,23 @@ export function SignupBirthdayScreen({ navigation }: V3ScreenProps<'SignupBirthd
     const anniversary = withDates ? toIsoDate(anniv) : undefined;
     setSignupDraft({ birthday, anniversary });
     setBusy(true);
-    await signup({
-      name: signupDraft.name ?? '',
-      mobile: signupDraft.mobile ?? '',
-      password: signupDraft.password ?? '',
-      referralCode: signupDraft.referralCode,
-      birthday,
-      anniversary,
-    });
-    setBusy(false);
-    setUser({ name: signupDraft.name ?? '', mobile: signupDraft.mobile ?? '' });
+    try {
+      const u = await signup({
+        name: signupDraft.name ?? '',
+        mobile: signupDraft.mobile ?? '',
+        password: signupDraft.password ?? '',
+        referralCode: signupDraft.referralCode,
+        birthday,
+        anniversary,
+      });
+      setUser({ name: u.name, mobile: u.mobile, inviteCode: u.inviteCode });
+      await refreshAccount();
+    } catch (e) {
+      toast(errorText(e), 'error');
+      return;
+    } finally {
+      setBusy(false);
+    }
     navigation.reset({ index: 0, routes: [{ name: 'SignupSuccess' }] });
   };
 

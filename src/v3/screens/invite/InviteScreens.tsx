@@ -14,7 +14,7 @@ import { Sheet } from '../../components/Sheet';
 import { useToast } from '../../components/Toast';
 import { Bar, Pill } from '../../components/GameArt';
 import { RANKS, RANK_ORDER, RankId, nextRank, rankFor } from '../../data/ranks';
-import { RUNS_PER_INVITE, Referrals, inviteCode, inviteMessage, referrals } from '../../api/invite';
+import { RUNS_PER_INVITE, Referrals, inviteMessage, referrals } from '../../api/invite';
 import { fmt, initials, useV3 } from '../../state/Store';
 import { V3ScreenProps } from '../../navigation/types';
 
@@ -51,12 +51,12 @@ const HOW = [
 export function InviteEarnScreen({ navigation }: V3ScreenProps<'InviteEarn'>) {
   const insets = useSafeAreaInsets();
   const { user, account } = useV3();
-  const code = inviteCode(user?.name);
+  const code = user?.inviteCode ?? '';
   const { copied, copy } = useCopy(code);
   const [refs, setRefs] = useState<Referrals | null>(null);
   useEffect(() => {
-    referrals(account.lifetimePoints === 0).then(setRefs);
-  }, [account.lifetimePoints]);
+    referrals().then(setRefs);
+  }, []);
 
   return (
     <View style={{ flex: 1, backgroundColor: c.surfaceCard }}>
@@ -192,9 +192,9 @@ export function RankPill({ rank }: { rank: RankId }) {
 export function MyInviteQrScreen() {
   const insets = useSafeAreaInsets();
   const { user, account } = useV3();
-  const code = inviteCode(user?.name);
+  const code = user?.inviteCode ?? '';
   const { copied, copy } = useCopy(code);
-  const name = user?.name ?? 'Ram Kumar';
+  const name = user?.name ?? '';
   return (
     <View style={{ flex: 1, backgroundColor: c.surfacePage }}>
       <StatusBar style="dark" />

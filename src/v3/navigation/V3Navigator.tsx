@@ -19,6 +19,7 @@ import {
   ForgotSuccessScreen,
   ForgotVerifyScreen,
 } from '../screens/auth/ForgotScreens';
+import { OtpResetScreen } from '../screens/auth/OtpResetScreen';
 import { WelcomeScreen } from '../screens/home/WelcomeScreen';
 import { HomeScreen } from '../screens/home/HomeScreen';
 import { HowItWorksSheet, RankSheet } from '../screens/home/HomeSheets';
@@ -66,6 +67,7 @@ export function V3Navigator() {
       <Stack.Screen name="SignupBirthday" component={SignupBirthdayScreen} />
       <Stack.Screen name="SignupSuccess" component={SignupSuccessScreen} options={{ animation: 'fade' }} />
       <Stack.Screen name="ForgotMobile" component={ForgotMobileScreen} />
+      <Stack.Screen name="ForgotOtp" component={OtpResetScreen} />
       <Stack.Screen name="ForgotVerify" component={ForgotVerifyScreen} />
       <Stack.Screen name="ForgotChat" component={ForgotChatScreen} />
       <Stack.Screen name="ForgotNewPassword" component={ForgotNewPasswordScreen} />

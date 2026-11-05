@@ -1,9 +1,7 @@
-// Payouts. Contract from the B3 dev notes:
-//   POST /withdrawals {amount, upi_id | upi_qr_image} → status Requested
-//   GET  /withdrawals/{id} → status, UTR, proof url, reason
-// Payouts are manual (UPI / QR) by GoMax finance in 24–48 hrs.
+// Payouts (B3). POST /withdrawals · GET /withdrawals/{id} · GET /wallet.
+import { api, dayMonthTime, read } from './client';
 
-export type WithdrawalStatus = 'requested' | 'approved' | 'paid' | 'rejected';
+export type WithdrawalStatus = 'requested' | 'approved' | 'held' | 'processing' | 'paid' | 'rejected' | 'failed';
 
 export type Withdrawal = {
   id: string;
@@ -18,35 +16,67 @@ export type Withdrawal = {
   reason?: string;
 };
 
-let rows: Withdrawal[] = [
-  {
-    id: 'W-3001',
-    amount: 1000,
-    upiId: 'ram@ybl',
-    upiName: 'RAM KUMAR',
-    status: 'paid',
-    requestedAt: '2 Oct, 11:20 am',
-    approvedAt: '2 Oct, 5:10 pm',
-    paidAt: '3 Oct, 6:42 pm',
-    utr: '4271 8836 5520',
-  },
-  {
-    id: 'W-2990',
-    amount: 1000,
-    upiId: 'ram@ybl',
-    upiName: 'RAM KUMR',
-    status: 'rejected',
-    requestedAt: '28 Sep, 9:05 am',
-    reason: 'UPI name does not match your PAN name.',
-  },
-];
+type ServerWithdrawal = {
+  id: string;
+  amount: number;
+  upiId: string;
+  upiName: string | null;
+  status: WithdrawalStatus;
+  reason: string | null;
+  requestedAt: string;
+  approvedAt: string | null;
+  paidAt: string | null;
+  utr: string | null;
+};
 
-export const withdrawalById = (id: string) => rows.find((r) => r.id === id) ?? rows[0];
+const toWithdrawal = (w: ServerWithdrawal): Withdrawal => ({
+  id: w.id,
+  amount: w.amount,
+  upiId: w.upiId,
+  upiName: w.upiName ?? '',
+  status: w.status,
+  requestedAt: dayMonthTime(w.requestedAt),
+  approvedAt: w.approvedAt ? dayMonthTime(w.approvedAt) : undefined,
+  paidAt: w.paidAt ? dayMonthTime(w.paidAt) : undefined,
+  utr: w.utr ?? undefined,
+  reason: w.reason ?? undefined,
+});
 
-export async function requestWithdrawal(amount: number, upiId: string, upiName: string) {
-  await new Promise((r) => setTimeout(r, 500));
-  const now = new Date().toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true });
-  const w: Withdrawal = { id: `W-${3002 + rows.length}`, amount, upiId, upiName, status: 'requested', requestedAt: now };
-  rows = [w, ...rows];
+const seen = new Map<string, Withdrawal>();
+const EMPTY: Withdrawal = { id: '', amount: 0, upiId: '', upiName: '', status: 'requested', requestedAt: '' };
+
+/** Reads a withdrawal already loaded with loadWithdrawal. */
+export const withdrawalById = (id: string) => seen.get(id) ?? EMPTY;
+
+export async function loadWithdrawal(id: string) {
+  const w = toWithdrawal(await api<ServerWithdrawal>(`/withdrawals/${encodeURIComponent(id)}`));
+  seen.set(w.id, w);
   return w;
+}
+
+/** Points go on hold on the server. Throws ApiError with the reason it was refused. */
+export async function requestWithdrawal(amount: number, upiId: string) {
+  const w = toWithdrawal(await api<ServerWithdrawal>('/withdrawals', { method: 'POST', body: { amount, upiId } }));
+  seen.set(w.id, w);
+  return w;
+}
+
+export type WithdrawLimits = { minPoints: number; maxPerRequest: number; maxPerMonth: number };
+
+export async function withdrawLimits(): Promise<WithdrawLimits | null> {
+  return read(async () => (await api<{ withdraw: WithdrawLimits }>('/wallet')).withdraw, null);
+}
+
+type Nav = { navigate: (...args: never[]) => void };
+
+/** Opens the right screen for a withdraw row in the history (its sub is "W-12"). */
+export async function openWithdrawal(nav: Nav, sub: string) {
+  const id = sub.match(/W-\d+/)?.[0];
+  if (!id) return;
+  const w = await read(() => loadWithdrawal(id), null);
+  if (!w) return;
+  const go = nav.navigate as (route: string, params: object) => void;
+  if (w.status === 'paid') go('WithdrawPaid', { id });
+  else if (w.status === 'rejected' || w.status === 'failed') go('WithdrawRejected', { id });
+  else go('WithdrawDone', { amount: w.amount });
 }
