@@ -30,7 +30,7 @@ type Nav = BottomTabNavigationProp<MainTabParamList> & NativeStackNavigationProp
 type CategoryTile = { key: string; icon: keyof typeof Ionicons.glyphMap; bg: string; fg: string };
 
 // NOTE: `src/data/productsMock.ts` / a "Products" tab / `ProductCategory`
-// don't exist in the current app (BACKEND.md documents the old
+// don't exist in the current app (backend/BACKEND_NOTES.md documents the old
 // products/marketplace browsing flow as an intentional "hard cut" during the
 // Supabase rewrite — the `products` table still exists in Supabase but is
 // unused). Rather than reviving that surface or adding a new shared data

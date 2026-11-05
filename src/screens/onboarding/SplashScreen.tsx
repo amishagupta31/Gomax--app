@@ -5,7 +5,6 @@ import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { colors, m3Type, spacing } from '../../theme';
 import { GoMaxLogo } from '../../components/GoMaxLogo';
 import { useApp } from '../../state/AppContext';
-import { adminAccountExists } from '../../services/auth';
 import { OnboardingStackParamList } from '../../navigation/types';
 
 type Props = NativeStackScreenProps<OnboardingStackParamList, 'Splash'>;
@@ -36,23 +35,6 @@ export function SplashScreen({ navigation }: Props) {
     }
   }, [navigation, isAuthenticated, sessionLoading, minTimeElapsed]);
 
-  const [checkingAdmin, setCheckingAdmin] = React.useState(false);
-
-  const goToAdminLogin = async () => {
-    setCheckingAdmin(true);
-    try {
-      const exists = await adminAccountExists();
-      routedRef.current = true;
-      if (exists) {
-        navigation.getParent()?.navigate('AdminLogin');
-      } else {
-        navigation.navigate('AdminSetup');
-      }
-    } finally {
-      setCheckingAdmin(false);
-    }
-  };
-
   return (
     <LinearGradient
       colors={[colors.black, colors.gradientNavyDeep]}
@@ -62,9 +44,6 @@ export function SplashScreen({ navigation }: Props) {
       style={styles.container}
     >
       <GoMaxLogo variant="full-orange" width={260} />
-      <Pressable style={styles.adminLink} onPress={goToAdminLogin} hitSlop={16} disabled={checkingAdmin}>
-        <Text style={styles.adminLinkText}>{checkingAdmin ? 'Checking…' : 'Staff / Admin login'}</Text>
-      </Pressable>
       {__DEV__ ? (
         <Pressable
           style={styles.devLink}
@@ -80,8 +59,6 @@ export function SplashScreen({ navigation }: Props) {
 
 const styles = StyleSheet.create({
   container: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  adminLink: { position: 'absolute', bottom: 40 },
-  adminLinkText: { ...m3Type.labelLarge, fontSize: 12, color: 'rgba(255,255,255,0.35)' },
   devLink: { position: 'absolute', bottom: 12 },
   devLinkText: { ...m3Type.labelSmall, fontSize: 10, color: 'rgba(255,255,255,0.2)' },
 });

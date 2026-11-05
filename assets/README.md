@@ -9,7 +9,7 @@ How images are organized in this repo, and how to add more.
   - `gomax-mark-orange.png` / `gomax-mark-navy.png` — the triangular mark on its own, transparent background.
 - `photos/` — real photography used as screen headers (construction sites, workers). **Currently empty / placeholder graphics are used instead** — see below.
 - `illustrations/` — 3D character illustrations (mason, dealer, salesman, birthday couple) and any other custom illustration. **Currently empty / placeholder graphics are used instead** — see below.
-- Root `assets/` also holds the Expo app icon files (`icon.png`, `android-icon-*.png`, `splash-icon.png`, `favicon.png`) — leave those where they are, Expo's config (`app.json`) points at them directly.
+- Root `assets/` also holds the Expo app icon files (`icon.png`, `android-icon-*.png`, `favicon.png`) — leave those where they are, Expo's config (`app.json`) points at them directly.
 
 ## Why `photos/` and `illustrations/` are empty
 

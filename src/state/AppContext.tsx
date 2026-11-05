@@ -6,6 +6,8 @@ import type { SignupInput } from '../services/auth';
 
 export type Role = 'dealer' | 'contractor' | 'applicator' | 'admin';
 
+export const ADMIN_ON_WEBSITE = 'Admin accounts use the GoMax Admin website (admin.gomax.in), not the app.';
+
 type AppState = {
   isAuthenticated: boolean;
   sessionLoading: boolean;
@@ -22,15 +24,12 @@ type AppState = {
   points: number;
   runs: number;
   referralCode: string;
-  isAdminAuthenticated: boolean;
 };
 
 type AppContextValue = AppState & {
   signUp: (input: SignupInput) => Promise<void>;
   logIn: (mobileNumber: string, password: string) => Promise<void>;
   logOut: () => Promise<void>;
-  adminLogin: (email: string, password: string) => Promise<void>;
-  adminLogout: () => Promise<void>;
   refreshProfile: () => Promise<void>;
 };
 
@@ -50,7 +49,6 @@ const initialState: AppState = {
   points: 0,
   runs: 0,
   referralCode: '',
-  isAdminAuthenticated: false,
 };
 
 const AppContext = createContext<AppContextValue | undefined>(undefined);
@@ -60,6 +58,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const hydrateFromProfile = useCallback(async () => {
     const profile = await profileService.getMyProfile();
+    // The admin panel is website-only (admin-web / admin.gomax.in): admin
+    // accounts are never signed in to the app.
+    if (profile?.role === 'admin') {
+      await supabase.auth.signOut();
+      setState({ ...initialState, sessionLoading: false });
+      throw new Error(ADMIN_ON_WEBSITE);
+    }
     if (!profile) {
       setState((s) => ({ ...s, isAuthenticated: true, sessionLoading: false }));
       return;
@@ -81,7 +86,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       points: profile.points,
       runs: profile.runs,
       referralCode: profile.referral_code ?? '',
-      isAdminAuthenticated: profile.role === 'admin',
     }));
   }, []);
 
@@ -89,12 +93,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     let mounted = true;
     authService.getSession().then((session) => {
       if (!mounted) return;
-      if (session) hydrateFromProfile();
+      if (session) hydrateFromProfile().catch(() => {});
       else setState((s) => ({ ...s, sessionLoading: false }));
     });
 
     const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (session) hydrateFromProfile();
+      if (session) hydrateFromProfile().catch(() => {});
       else setState({ ...initialState, sessionLoading: false });
     });
 
@@ -120,22 +124,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
       logOut: async () => {
         await authService.signOut();
-        setState({ ...initialState, sessionLoading: false });
-      },
-
-      adminLogin: async (email, password) => {
-        const { error } = await supabase.auth.signInWithPassword({ email, password });
-        if (error) throw error;
-        const profile = await profileService.getMyProfile();
-        if (profile?.role !== 'admin') {
-          await supabase.auth.signOut();
-          throw new Error('This account does not have admin access.');
-        }
-        await hydrateFromProfile();
-      },
-
-      adminLogout: async () => {
-        await supabase.auth.signOut();
         setState({ ...initialState, sessionLoading: false });
       },
 

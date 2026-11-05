@@ -22,6 +22,7 @@ import { colors } from './src/theme';
 import { AppProvider } from './src/state/AppContext';
 import { RootNavigator } from './src/navigation/RootNavigator';
 import { GoMaxLogo } from './src/components/GoMaxLogo';
+import { V3App } from './src/v3/V3App';
 
 export default function App() {
   const [interLoaded] = useInter({ Inter_400Regular, Inter_500Medium, Inter_600SemiBold, Inter_700Bold });
@@ -32,6 +33,17 @@ export default function App() {
       <View style={styles.loading}>
         <GoMaxLogo variant="full-orange" width={180} />
       </View>
+    );
+  }
+
+  // Final Applicator app from the GOMAX – DEV Figma file (src/v3).
+  if (process.env.EXPO_PUBLIC_UI === 'v3') {
+    return (
+      <GestureHandlerRootView style={styles.flex}>
+        <SafeAreaProvider>
+          <V3App />
+        </SafeAreaProvider>
+      </GestureHandlerRootView>
     );
   }
 

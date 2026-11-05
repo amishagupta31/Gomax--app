@@ -4,7 +4,6 @@ import * as wallet from '../services/wallet';
 import * as gifts from '../services/gifts';
 import * as engagement from '../services/engagement';
 import * as spin from '../services/spin';
-import * as admin from '../services/admin';
 
 function useAsync<T>(fetcher: () => Promise<T>, initial: T, deps: unknown[] = []) {
   const [data, setData] = useState<T>(initial);
@@ -53,16 +52,3 @@ export const useBadges = () => useAsync<engagement.BadgeRow[]>(engagement.listBa
 export const useMyUnlockedBadges = () => useAsync<engagement.UserBadgeRow[]>(engagement.listMyUnlockedBadges, []);
 export const useScratchCards = () => useAsync<engagement.MyScratchCard[]>(engagement.ensureMyScratchCards, []);
 export const useSpinsUsedToday = () => useAsync<number>(spin.getSpinsUsedToday, 0);
-export const useApplicators = () => useAsync<admin.ProfileRow[]>(admin.listApplicators, []);
-export const usePendingRedemptions = () =>
-  useAsync<admin.RedemptionRequestRow[]>(admin.listPendingRedemptions, []);
-export const useAllRedemptions = () =>
-  useAsync<Awaited<ReturnType<typeof admin.listAllRedemptions>>>(admin.listAllRedemptions, []);
-export const useGiftRedemptionsAdmin = (status?: 'pending' | 'shipped' | 'delivered') =>
-  useAsync<Awaited<ReturnType<typeof admin.listGiftRedemptions>>>(() => admin.listGiftRedemptions(status), [], [status]);
-export const useKpiSummary = () =>
-  useAsync<Awaited<ReturnType<typeof admin.getKpiSummary>>>(admin.getKpiSummary, {
-    scansToday: 0,
-    pointsIssuedThisMonth: 0,
-    pendingRedemptions: 0,
-  });

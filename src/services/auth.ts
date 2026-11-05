@@ -141,34 +141,3 @@ export async function resetPasswordWithOtp(
   if (!payload.success) throw new Error(payload.error ?? 'Could not reset password');
 }
 
-/** Whether an admin account already exists — gates whether the setup screen offers to create one. */
-export async function adminAccountExists(): Promise<boolean> {
-  const { data, error } = await supabase.rpc('admin_account_exists');
-  if (error) throw error;
-  return !!data;
-}
-
-/**
- * Creates the one-and-only bootstrap admin account. Uses real email+password
- * (matching AdminLoginScreen), not the mobile-synthetic-email trick used for
- * Dealer/Contractor/Applicator. Server re-checks admin_account_exists() so
- * this can't be raced/bypassed even if the client's earlier check was stale.
- */
-export async function bootstrapAdminAccount(email: string, password: string, fullName: string) {
-  const { data: signUpData, error: signUpError } = await supabase.auth.signUp({ email, password });
-  if (signUpError) throw signUpError;
-  if (!signUpData.user) throw new Error('Signup did not return a user');
-
-  if (!signUpData.session) {
-    const { error: signInError } = await supabase.auth.signInWithPassword({ email, password });
-    if (signInError) throw signInError;
-  }
-
-  const { data: result, error: rpcError } = await supabase.rpc('bootstrap_admin_account', { p_full_name: fullName });
-  if (rpcError) throw rpcError;
-  const payload = result as { success: boolean; error?: string };
-  if (!payload.success) {
-    await supabase.auth.signOut();
-    throw new Error(payload.error === 'admin_already_exists' ? 'An admin account already exists.' : 'Could not create admin account');
-  }
-}

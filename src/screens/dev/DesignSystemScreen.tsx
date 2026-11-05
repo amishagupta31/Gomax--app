@@ -227,7 +227,7 @@ export function DesignSystemScreen({ navigation }: Props) {
 
         <SectionHeader
           title="Typography — m3Type scale"
-          subtitle="Roboto-based Material 3 static scale. Use on onboarding-style screens (Login, Signup, Splash, AdminSetup) and any component built to the Figma-exact spec (Pill, TextField, StatTile)."
+          subtitle="Roboto-based Material 3 static scale. Use on onboarding-style screens (Login, Signup, Splash) and any component built to the Figma-exact spec (Pill, TextField, StatTile)."
         />
         <Card style={styles.typeCard}>
           {(Object.keys(m3Type) as (keyof typeof m3Type)[]).map((key) => (
@@ -404,7 +404,7 @@ export function DesignSystemScreen({ navigation }: Props) {
           <Text style={styles.bodyText}>
             BottomNav isn&apos;t mounted standalone here — it requires live React Navigation tab state
             (BottomTabBarProps) rather than props you&apos;d fake in isolation. See it live as the tab bar on
-            MainTabNavigator / AdminTabNavigator, or read its source at src/components/BottomNav.tsx.
+            MainTabNavigator, or read its source at src/components/BottomNav.tsx.
           </Text>
         </Card>
       </ScrollView>

@@ -3,7 +3,6 @@ export type OnboardingStackParamList = {
   Login: undefined;
   Signup: undefined;
   ForgotPassword: undefined;
-  AdminSetup: undefined;
 };
 
 // One shared tab set for Dealer / Contractor / Applicator — content inside
@@ -17,14 +16,6 @@ export type MainTabParamList = {
   Profile: undefined;
 };
 
-export type AdminTabParamList = {
-  Dashboard: undefined;
-  Redemptions: undefined;
-  Gifts: undefined;
-  Directory: undefined;
-  LedgerSearch: undefined;
-};
-
 export type RootStackParamList = {
   Onboarding: undefined;
   Main: undefined;
@@ -33,10 +24,20 @@ export type RootStackParamList = {
   SpinWheel: undefined;
   Team: undefined;
   Ledger: undefined;
-  AdminLogin: undefined;
-  AdminMain: undefined;
-  AdminGiftCatalogue: undefined;
-  AdminChallengesManage: undefined;
+  Notifications: undefined;
+  InviteEarn: undefined;
+  MyQrCode: undefined;
+  RankBenefits: undefined;
+  Products: undefined;
+  ProductDetail: { productId: string };
+  DataSheet: { productId: string };
+  CompareProducts: undefined;
+  GiftDetail: { giftId: string };
+  GiftAddress: { giftId: string };
+  GiftBooked: { redemptionId: string; giftName: string; runsSpent: number; imageUrl?: string };
+  MyGifts: undefined;
+  MyGiftDetail: { redemptionId: string };
+  History: { tab?: 'points' | 'runs' } | undefined;
   DesignSystem: undefined;
 };
 
